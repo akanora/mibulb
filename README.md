@@ -5,7 +5,10 @@
 Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC. You don't need a hub or any extra hardware, and nothing goes through the cloud. The app talks to the bulb directly over your Wi-Fi using Xiaomi's local miIO/MIoT protocol, the same one the Xiaomi Home app uses.
 
 - Turn the light on or off, set brightness, white temperature (1700–6500 K) and RGB colour
-- Use the system-tray icon: click it to toggle, right-click for a menu
+- Use the system-tray icon: click it to toggle, right-click for brightness and white presets
+- Press **Ctrl+Alt+L** anywhere to toggle the light
+- Start it with Windows, quietly in the tray
+- Get a notice in the window when a new version is released
 - Control it from the command line, for scripts, shortcuts or Task Scheduler
 - Scan the network to find the bulb's IP
 
@@ -25,7 +28,7 @@ Get these from the [latest release](https://github.com/akanora/mibulb/releases/l
 
 Run **`MiBulb-Setup.exe`**. It doesn't need admin rights. It installs Mi Bulb for your Windows account and adds it to the Start menu. It can also:
 
-- start Mi Bulb in the system tray when you sign in (on by default)
+- start Mi Bulb in the system tray when you sign in (on by default; you can change this later in settings)
 - add a desktop shortcut
 
 Uninstall it from **Settings → Apps**. To update, run the newer installer over the old one; your bulb settings are kept.
@@ -66,7 +69,21 @@ If the router gives the bulb a new IP, Mi Bulb finds it again on the network by 
 
 **Manual setup:** you can also type the IP and token in yourself, for example ones you got from [Xiaomi Cloud Tokens Extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor).
 
-The installer can start Mi Bulb with Windows for you. With the portable exe, put a shortcut to `MiBulb-Portable.exe --minimized` in `shell:startup`.
+To start Mi Bulb with Windows, turn on **Start with Windows** in settings → App. This works for the portable exe too.
+
+## App settings
+
+Open settings with ⚙ in the window, or **Settings…** in the tray menu. The **App** tab has:
+
+| Option | What it does |
+| --- | --- |
+| Start with Windows | Starts Mi Bulb in the tray when you sign in. This is the same setting as the installer's checkbox. |
+| Ctrl+Alt+L | Toggles the light from any app. If another app already uses this shortcut, Mi Bulb tells you. |
+| Check for updates | Checks GitHub once at startup and shows a link in the window if a newer version exists. **Check now** checks right away. |
+| Open folder | Opens `%APPDATA%\mibulb`, where your settings and the bulb's token live. |
+| Forget this bulb | Removes the bulb's name, IP and token from this PC, but keeps your app options. |
+
+App options are saved as soon as you change them.
 
 ## Command line
 

@@ -45,7 +45,17 @@ Source: "..\dist\MiBulb\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdir
 [Icons]
 Name: "{autoprograms}\Mi Bulb"; Filename: "{app}\MiBulb.exe"
 Name: "{autodesktop}\Mi Bulb"; Filename: "{app}\MiBulb.exe"; Tasks: desktopicon
-Name: "{userstartup}\Mi Bulb"; Filename: "{app}\MiBulb.exe"; Parameters: "--minimized"; Tasks: startup
+
+[Registry]
+; Same value the app's "Start with Windows" setting uses (mibulb/startup.py).
+; The first entry only makes sure uninstall removes it, even if it was
+; turned on later from the app.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Mi Bulb"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Mi Bulb"; ValueData: """{app}\MiBulb.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: startup
+
+[InstallDelete]
+; v0.2.0 used a Startup folder shortcut instead of the Run key.
+Type: files; Name: "{userstartup}\Mi Bulb.lnk"
 
 [Run]
 Filename: "{app}\MiBulb.exe"; Description: "{cm:LaunchProgram,Mi Bulb}"; Flags: nowait postinstall skipifsilent

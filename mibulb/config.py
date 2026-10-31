@@ -39,6 +39,9 @@ class Config:
     name: str = "Light"
     did: str = ""  # device id, used to find the bulb again if its IP changes
     properties: dict[str, int] = field(default_factory=dict)
+    # App preferences (start with Windows lives in the registry, see startup.py)
+    hotkey: bool = True
+    check_updates: bool = True
 
     @property
     def is_complete(self) -> bool:
@@ -56,6 +59,8 @@ def load(path: Path | None = None) -> Config:
         name=data.get("name", "Light"),
         did=str(data.get("did", "")),
         properties=data.get("properties", {}),
+        hotkey=bool(data.get("hotkey", True)),
+        check_updates=bool(data.get("check_updates", True)),
     )
 
 
@@ -67,5 +72,12 @@ def save(config: Config, path: Path | None = None) -> Path:
         data["did"] = config.did
     if config.properties:
         data["properties"] = config.properties
+    data["hotkey"] = config.hotkey
+    data["check_updates"] = config.check_updates
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def forget_bulb(config: Config) -> Config:
+    """Return a copy without the bulb's name, IP, token and device id, keeping app preferences."""
+    return Config(properties=config.properties, hotkey=config.hotkey, check_updates=config.check_updates)

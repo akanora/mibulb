@@ -1,3 +1,3 @@
 """Control a Mi Smart LED Bulb Essential from your PC over the local network."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
