@@ -194,6 +194,19 @@ class Bulb:
             self._miot_set(color=rgb)
 
 
+    def sync_color(self, rgb: int, brightness: int | None, fade_ms: int) -> None:
+        """A quick colour (and optional brightness) change for screen sync. The light must be on."""
+        rgb = max(1, min(0xFFFFFF, int(rgb)))
+        if self._detect() == "yeelight":
+            self.device.send("set_rgb", [rgb, "smooth", fade_ms])
+            if brightness is not None:
+                self.device.send("set_bright", [max(1, min(100, int(brightness))), "smooth", fade_ms])
+        else:
+            values: dict[str, object] = {"color": rgb}
+            if brightness is not None:
+                values["brightness"] = max(1, min(100, int(brightness)))
+            self._miot_set(**values)
+
     def apply_scene(self, brightness: int, kelvin: int | None = None, rgb: int | None = None) -> None:
         """Turn on and set brightness plus either a white temperature or a colour."""
         brightness = max(1, min(100, int(brightness)))
@@ -315,6 +328,9 @@ class BulbGroup:
 
     def apply_scene(self, brightness: int, kelvin: int | None = None, rgb: int | None = None) -> None:
         self._each(lambda b: b.apply_scene(brightness, kelvin=kelvin, rgb=rgb))
+
+    def sync_color(self, rgb: int, brightness: int | None, fade_ms: int) -> None:
+        self._each(lambda b: b.sync_color(rgb, brightness, fade_ms))
 
 
 def parse_color(text: str) -> int:

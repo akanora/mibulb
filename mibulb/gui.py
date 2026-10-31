@@ -14,7 +14,7 @@ from datetime import datetime
 from tkinter import colorchooser, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
-from . import __version__, automation, hotkey, pcevents, startup, updates
+from . import __version__, automation, hotkey, pcevents, screensync, startup, updates
 from . import config as config_mod
 from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbGroup, BulbState
 from .cloud import Cancelled, CloudDevice, QrLogin, XiaomiCloud
@@ -574,6 +574,14 @@ class SettingsDialog(tk.Toplevel):
             ttk.Radiobutton(tab, text=text, value=value, variable=self.tray_click_var,
                             command=self._set_tray_click).pack(anchor="w")
 
+        section("Screen sync")
+        self.sync_brightness_var = tk.BooleanVar(value=self._app.cfg.sync_brightness)
+        ttk.Checkbutton(tab, text="Also follow how bright the screen is", variable=self.sync_brightness_var,
+                        command=self._set_sync_brightness).pack(anchor="w")
+        ttk.Label(tab, text="Works with windowed and borderless games. Exclusive fullscreen games may not "
+                            "be captured; the light then keeps its last colour.",
+                  style="Muted.TLabel", wraplength=420).pack(anchor="w")
+
         section("Updates")
         self.updates_var = tk.BooleanVar(value=self._app.cfg.check_updates)
         ttk.Checkbutton(tab, text="Install new versions automatically (checked when Mi Bulb starts)",
@@ -784,6 +792,12 @@ class SettingsDialog(tk.Toplevel):
             self._app.apply_shortcuts()
         super().destroy()
 
+    def _set_sync_brightness(self) -> None:
+        self._app.cfg.sync_brightness = self.sync_brightness_var.get()
+        config_mod.save(self._app.cfg)
+        if self._app.screen_sync is not None:
+            self._app.screen_sync.match_brightness = self._app.cfg.sync_brightness
+
     def _set_tray_click(self) -> None:
         self._app.cfg.tray_click = self.tray_click_var.get()
         config_mod.save(self._app.cfg)
@@ -989,6 +1003,7 @@ class App(tk.Tk):
         self._settings_open = False
         self._program: dict | None = None  # running sleep timer or sunrise
         self.quick_panel: QuickPanel | None = None
+        self.screen_sync: screensync.ScreenSync | None = None
         self._schedules_fired: set[tuple[str, str]] = set()
         self._off_by_pc = False
         self._last_pc_event = ("", 0.0)
@@ -1092,6 +1107,8 @@ class App(tk.Tk):
         self.color_swatch = tk.Label(top, width=3, bg="#ffffff", relief="flat")
         self.color_swatch.pack(side="right")
         ttk.Button(top, text="Pick…", command=self.pick_color).pack(side="right", padx=(0, 8))
+        self.sync_button = ttk.Button(top, text="Screen sync", command=self.toggle_screen_sync)
+        self.sync_button.pack(side="right", padx=(0, 8))
         swatches = tk.Frame(colors, bg=PANEL)
         swatches.pack(fill="x", pady=(10, 0))
         for color in PRESET_COLORS:
@@ -1117,7 +1134,7 @@ class App(tk.Tk):
         self.update_label = ttk.Label(root, text="", style="Muted.TLabel", foreground=ACCENT, cursor="hand2")
         # Shown while a sleep timer or sunrise runs; click to cancel
         self.program_label = ttk.Label(root, text="", style="Muted.TLabel", foreground=ACCENT, cursor="hand2")
-        self.program_label.bind("<Button-1>", lambda _e: self.cancel_program())
+        self.program_label.bind("<Button-1>", lambda _e: self._stop_running())
 
         self.protocol("WM_DELETE_WINDOW", self.hide_or_quit)
         self.bind("<space>", lambda _e: self.toggle())
@@ -1166,8 +1183,12 @@ class App(tk.Tk):
             self._set_status("Not configured – open settings (⚙) to add your bulb.")
 
     def _run(self, key: str, func: Callable[[Bulb], Any], refresh: bool = False, manual: bool = True) -> None:
-        if manual and key != "status" and self._program is not None:
-            self.cancel_program(quiet=True)  # you took over, so stop the timer or sunrise
+        if manual and key != "status":
+            # You took over, so stop a timer, sunrise or screen sync.
+            if self._program is not None:
+                self.cancel_program(quiet=True)
+            if self.screen_sync is not None:
+                self.stop_screen_sync(quiet=True)
         bulb = self.bulb
         if bulb is None:
             self._set_status("Not configured – open settings (⚙) to add your bulb.", error=True)
@@ -1435,6 +1456,8 @@ class App(tk.Tk):
             self.apply_scene_id(action.split(":", 1)[1])
         elif action == "window":
             self.show()
+        elif action == "screen_sync":
+            self.toggle_screen_sync()
         elif action == "sleep":
             if self._program and self._program["name"] == "sleep":
                 self.cancel_program()
@@ -1568,6 +1591,8 @@ class App(tk.Tk):
             pystray.MenuItem("Scenes", pystray.Menu(lambda: (
                 pystray.MenuItem(scene.name, scene_action(scene.id)) for scene in self.cfg.scenes
             ))),
+            pystray.MenuItem("Screen sync", lambda: post(self.toggle_screen_sync),
+                             checked=lambda _item: self.screen_sync is not None),
             pystray.MenuItem("Sleep timer", pystray.Menu(
                 *[pystray.MenuItem(f"Off in {m} min", action(self.start_sleep_timer, m))
                   for m in automation.SLEEP_TIMER_MINUTES],
@@ -1672,6 +1697,52 @@ class App(tk.Tk):
         if not quiet:
             self._set_status("Timer cancelled.")
 
+    def _stop_running(self) -> None:
+        if self.screen_sync is not None:
+            self.stop_screen_sync()
+        else:
+            self.cancel_program()
+
+    def toggle_screen_sync(self) -> None:
+        if self.screen_sync is not None:
+            self.stop_screen_sync()
+        else:
+            self.start_screen_sync()
+
+    def start_screen_sync(self) -> None:
+        if self.bulb is None:
+            self._set_status("Add your bulb first (⚙).", error=True)
+            return
+        self.cancel_program(quiet=True)
+        self._run("power", lambda b: b.turn_on(), manual=False)
+
+        def send(rgb: int, brightness: int | None) -> None:
+            # Called from the capture thread; the worker keeps only the newest pending update.
+            self._ui_calls.put(lambda: self._run(
+                "sync", lambda b: b.sync_color(rgb, brightness, screensync.FADE_MS), manual=False))
+
+        self.screen_sync = screensync.ScreenSync(send, match_brightness=self.cfg.sync_brightness)
+        self.screen_sync.start()
+        self.sync_button.configure(text="Stop sync", style="Accent.TButton")
+        self.program_label.configure(text="Screen sync is on  ·  click to stop")
+        self.program_label.pack(fill="x", pady=(4, 0))
+        if self.tray is not None:
+            self.tray.update_menu()
+
+    def stop_screen_sync(self, quiet: bool = False) -> None:
+        if self.screen_sync is None:
+            return
+        self.screen_sync.stop()
+        self.screen_sync = None
+        self.sync_button.configure(text="Screen sync", style="TButton")
+        if self._program is None:
+            self.program_label.pack_forget()
+        if self.tray is not None:
+            self.tray.update_menu()
+        if not quiet:
+            self._set_status("Screen sync stopped.")
+            self.refresh()
+
     def _schedule_tick(self) -> None:
         now = datetime.now()
         minute = now.strftime("%Y-%m-%d %H:%M")
@@ -1712,6 +1783,8 @@ class App(tk.Tk):
         if self._last_pc_event[0] == event and now - self._last_pc_event[1] < 10:
             return
         self._last_pc_event = (event, now)
+        if event in ("lock", "suspend"):
+            self.stop_screen_sync(quiet=True)  # nothing to follow on a locked screen
         if event in ("lock", "suspend") and self.cfg.lock_off:
             if self.bulb_state is None or self.bulb_state.on:
                 self._off_by_pc = True
@@ -1752,6 +1825,7 @@ class App(tk.Tk):
         self.after_cancel(self._poll_id)
         self.after_cancel(self._tick_id)
         self.cancel_program(quiet=True)
+        self.stop_screen_sync(quiet=True)
         self.hotkeys.stop()
         self.pc_watcher.stop()
         if self.tray is not None:

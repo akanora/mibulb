@@ -9,6 +9,7 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 - Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
 - Several bulbs: control one, or all of them at once
+- Screen sync: the light follows the main colour on your screen, great for games and films
 - Scenes: one-click favourites like Reading, Relax, Movie and Gaming. Save your own and give them shortcuts.
 - Sleep timer that fades out, sunrise wake-up, and schedules (on/off/scene at set times)
 - Follows your PC: off when you lock it or it sleeps, back on when you return
@@ -80,6 +81,15 @@ To start Mi Bulb with Windows, turn on **Start with Windows** in settings → Ap
 Click **Sign in with Xiaomi** in Settings → Bulbs, then **Add all lights from my account** to add every light at once. You can also add bulbs one by one, or type them in yourself.
 
 With more than one bulb, the name at the top of the window gets a ▾. Click it to control **All lights** or just one bulb. The same choice is in the tray menu under **Light**. Scenes, shortcuts, timers and schedules act on whatever is picked there. If one bulb doesn't answer, the others still change, and the status line names the one that didn't.
+
+## Screen sync
+
+Click **Screen sync** in the Colour panel (or in the tray menu, or give it a shortcut). The light then follows the main colour on your main screen. Colourful areas count more than grey or dark UI, so a sunset or a red warning wins over the menu bars. It can also follow how bright the screen is (Settings → App → Screen sync).
+
+- It updates about 3 times a second with a short fade. A Mi Smart LED Bulb Essential handled 4 commands a second for 30 seconds without refusing any.
+- It uses about 10% of one CPU core, which is under 2% of a typical 8-core CPU.
+- Windowed and borderless games work. Exclusive fullscreen games may not be captured, and then the light keeps its last colour.
+- Changing the light yourself, or locking the PC, stops it.
 
 ## Tray quick panel
 

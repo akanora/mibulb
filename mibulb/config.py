@@ -34,6 +34,7 @@ SHORTCUT_ACTIONS = [
     ("daylight", "Daylight", ""),
     ("window", "Show Mi Bulb window", ""),
     ("sleep", "Sleep timer (30 min)", ""),
+    ("screen_sync", "Screen sync on/off", ""),
 ]
 DEFAULT_SHORTCUTS = {action: default for action, _label, default in SHORTCUT_ACTIONS}
 
@@ -108,6 +109,7 @@ class Config:
     lock_off: bool = False  # turn off when the PC locks or sleeps
     unlock_on: bool = False  # turn back on when you return (if Mi Bulb turned it off)
     tray_click: str = "panel"  # left-click on the tray icon: "panel" or "toggle"
+    sync_brightness: bool = True  # screen sync also follows how bright the screen is
 
     @property
     def usable_bulbs(self) -> list[BulbInfo]:
@@ -163,6 +165,7 @@ def load(path: Path | None = None) -> Config:
         lock_off=bool(data.get("lock_off", False)),
         unlock_on=bool(data.get("unlock_on", False)),
         tray_click="toggle" if data.get("tray_click") == "toggle" else "panel",
+        sync_brightness=bool(data.get("sync_brightness", True)),
     )
 
 
@@ -180,6 +183,7 @@ def save(config: Config, path: Path | None = None) -> Path:
         "lock_off": config.lock_off,
         "unlock_on": config.unlock_on,
         "tray_click": config.tray_click,
+        "sync_brightness": config.sync_brightness,
     }
     if config.skipped_update:
         data["skipped_update"] = config.skipped_update
