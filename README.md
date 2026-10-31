@@ -19,11 +19,22 @@ Tested target: model `MJDPL01YL` / `yeelink.light.color5`. Other MIoT lights may
 
 ## 1. Install
 
-### Option A: download the release (recommended)
+Get these from the [latest release](https://github.com/akanora/mibulb/releases/latest). GitHub Actions builds every release straight from the source in this repo; nobody uploads it by hand. See [Verifying a download](#verifying-a-download).
 
-Download `MiBulb.exe` from the [Releases](../../releases) page. GitHub Actions builds every release straight from the source in this repo; nobody uploads it by hand. See [Verifying a download](#verifying-a-download).
+### Option A: installer (recommended)
 
-### Option B: run from source
+Run **`MiBulb-Setup.exe`**. It doesn't need admin rights. It installs Mi Bulb for your Windows account and adds it to the Start menu. It can also:
+
+- start Mi Bulb in the system tray when you sign in (on by default)
+- add a desktop shortcut
+
+Uninstall it from **Settings → Apps**. To update, run the newer installer over the old one; your bulb settings are kept.
+
+### Option B: portable
+
+Run **`MiBulb-Portable.exe`** from anywhere, for example a USB stick. Nothing gets installed. It still saves your bulb settings to `%APPDATA%\mibulb`.
+
+### Option C: run from source
 
 ```powershell
 git clone https://github.com/akanora/mibulb.git
@@ -32,7 +43,9 @@ python -m pip install -r requirements.txt
 python -m mibulb
 ```
 
-To build the `.exe` yourself, run `.\build.ps1`. It creates `dist\MiBulb.exe`.
+To build it yourself, run `.\build.ps1`. It creates `dist\MiBulb-Portable.exe`, and `dist\MiBulb-Setup.exe` too if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed.
+
+Only one Mi Bulb runs at a time. Opening it again brings the existing window to the front.
 
 ## 2. Connect your bulb
 
@@ -53,7 +66,7 @@ If the router gives the bulb a new IP, Mi Bulb finds it again on the network by 
 
 **Manual setup:** you can also type the IP and token in yourself, for example ones you got from [Xiaomi Cloud Tokens Extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor).
 
-To start Mi Bulb with Windows, put a shortcut to `MiBulb.exe --minimized` in `shell:startup`.
+The installer can start Mi Bulb with Windows for you. With the portable exe, put a shortcut to `MiBulb-Portable.exe --minimized` in `shell:startup`.
 
 ## Command line
 
@@ -113,13 +126,13 @@ The tests run against a fake bulb on localhost, so you don't need a real device.
 
 Every release is built by the [Release workflow](.github/workflows/release.yml) on a clean GitHub-hosted Windows machine, from the tagged commit. Each release includes:
 
-- `MiBulb.exe` and `MiBulb.exe.sha256`. Check the hash with:
+- `MiBulb-Setup.exe`, `MiBulb-Portable.exe` and `SHA256SUMS.txt`. Compare a file's hash with the one listed:
   ```powershell
-  (Get-FileHash .\MiBulb.exe -Algorithm SHA256).Hash
+  (Get-FileHash .\MiBulb-Setup.exe -Algorithm SHA256).Hash
   ```
-- A signed **build provenance attestation** that proves the exe came from this repo's workflow. You can check it with the [GitHub CLI](https://cli.github.com/):
+- A signed **build provenance attestation** for both exes that proves they came from this repo's workflow. You can check it with the [GitHub CLI](https://cli.github.com/):
   ```powershell
-  gh attestation verify MiBulb.exe --repo akanora/mibulb
+  gh attestation verify MiBulb-Setup.exe --repo akanora/mibulb
   ```
 
 The exe isn't code-signed with a paid certificate, so Windows SmartScreen may warn the first time you run it. Click "More info" → "Run anyway".

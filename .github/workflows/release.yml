@@ -1,9 +1,10 @@
-# Builds MiBulb.exe on a clean GitHub-hosted runner and publishes it as a
-# release, with a SHA-256 checksum and a signed build provenance attestation.
+# Builds Mi Bulb on a clean GitHub-hosted runner and publishes it as a
+# release: an installer and a portable exe, with SHA-256 checksums and a
+# signed build provenance attestation.
 #
 # To release: bump __version__ in mibulb/__init__.py, then
-#   git tag v0.1.0
-#   git push origin v0.1.0
+#   git tag v0.2.0
+#   git push origin v0.2.0
 name: Release
 
 on:
@@ -32,31 +33,39 @@ jobs:
             throw "Tag ${{ github.ref_name }} does not match mibulb.__version__ ($version)"
           }
 
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt pyinstaller==6.11.1
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
 
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
 
-      - name: Build exe
-        run: python -m PyInstaller --noconfirm --onefile --windowed --icon assets/icon.ico --name MiBulb run_gui.py
+      - name: Build portable exe and installer
+        shell: pwsh
+        run: ./build.ps1 -RequireInstaller
 
-      - name: Checksum
+      - name: Checksums
         shell: pwsh
         run: |
-          $hash = (Get-FileHash dist/MiBulb.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  MiBulb.exe" | Out-File -Encoding ascii dist/MiBulb.exe.sha256
-          Get-Content dist/MiBulb.exe.sha256
+          Set-Location dist
+          Get-FileHash MiBulb-Setup.exe, MiBulb-Portable.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Out-File -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/MiBulb.exe
+          subject-path: |
+            dist/MiBulb-Setup.exe
+            dist/MiBulb-Portable.exe
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/MiBulb.exe
-            dist/MiBulb.exe.sha256
+            dist/MiBulb-Setup.exe
+            dist/MiBulb-Portable.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true

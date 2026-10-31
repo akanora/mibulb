@@ -21,3 +21,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
+
+  # Builds the installer on every push, so packaging problems show up before a release.
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: choco install innosetup --no-progress -y
+      - run: ./build.ps1 -RequireInstaller
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mibulb-windows
+          path: |
+            dist/MiBulb-Setup.exe
+            dist/MiBulb-Portable.exe
+          retention-days: 7

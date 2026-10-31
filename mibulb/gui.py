@@ -611,6 +611,10 @@ class App(tk.Tk):
     def show(self) -> None:
         self.deiconify()
         self.lift()
+        # Windows won't let a background app steal focus, but a brief
+        # "always on top" brings the window to the front reliably.
+        self.attributes("-topmost", True)
+        self.after(300, lambda: self.attributes("-topmost", False))
         self.focus_force()
 
     def hide_or_quit(self) -> None:
@@ -627,4 +631,16 @@ class App(tk.Tk):
 
 
 def main(start_minimized: bool = False) -> None:
-    App(start_minimized=start_minimized).mainloop()
+    from .single_instance import InstanceServer, notify_existing
+
+    # Already running? Bring that window forward instead of opening a second one.
+    # A --minimized launch (e.g. at Windows startup) just exits quietly.
+    if notify_existing(show=not start_minimized):
+        return
+
+    app = App(start_minimized=start_minimized)
+    server = InstanceServer(lambda: app._ui_calls.put(app.show))
+    try:
+        app.mainloop()
+    finally:
+        server.close()
