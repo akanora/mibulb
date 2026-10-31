@@ -49,6 +49,7 @@ class App(tk.Tk):
         self.screen_sync: screensync.ScreenSync | None = None
         self._effect: str | None = None  # id of the effect playing on the bulb
         self.music_sync: musicsync.MusicSync | None = None
+        self._music_check: str | None = None  # pending "did music sync start?" check
         self.api_server: api.ApiServer | None = None
         self.api_problem: str | None = None
         self._warmth_paused = ""  # evening (date) on which you changed the white yourself
@@ -958,7 +959,7 @@ class App(tk.Tk):
         self.music_sync.start()
         self.program_label.configure(text="Music sync is on  ·  click to stop")
         self.program_label.pack(fill="x", pady=(4, 0))
-        self.after(2500, self._check_music_sync)
+        self._music_check = self.after(2500, self._check_music_sync)
         if self.tray is not None:
             self.tray.update_menu()
 
@@ -971,6 +972,9 @@ class App(tk.Tk):
     def stop_music_sync(self, quiet: bool = False) -> None:
         if self.music_sync is None:
             return
+        if self._music_check is not None:
+            self.after_cancel(self._music_check)
+            self._music_check = None
         self.music_sync.stop()
         self.music_sync = None
         if self._program is None and self.screen_sync is None and self._effect is None:

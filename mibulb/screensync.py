@@ -29,7 +29,8 @@ def dominant_color(image) -> tuple[int, int] | None:
     Exclusive-fullscreen games can show up as black frames; None means "keep the last colour".
     """
     small = image.convert("RGB").resize((32, 18))
-    pixels = list(small.getdata())
+    # get_flattened_data replaces getdata in newer Pillow (getdata goes away in Pillow 14)
+    pixels = list(getattr(small, "get_flattened_data", small.getdata)())
     total_weight = r_sum = g_sum = b_sum = 0.0
     luminance = 0.0
     for r, g, b in pixels:

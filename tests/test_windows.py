@@ -4,6 +4,7 @@ Nothing is shown on screen: windows are withdrawn, the tray icon isn't started
 and the Windows-wide shortcuts are off.
 """
 
+import gc
 import json
 import os
 import tempfile
@@ -16,6 +17,7 @@ from unittest import mock
 from PIL import Image
 
 from mibulb import api, automation, config, effects, i18n, miio, screensync
+from mibulb import bulb as bulb_mod
 from mibulb import gui
 from mibulb.gui import app as app_module
 from mibulb.gui import settings as settings_module
@@ -56,7 +58,11 @@ class WindowTest(unittest.TestCase):
             "hotkey": False, "check_updates": False, "language": "en",
         }
         data.update(self.extra_config())
-        json.dump(data, open(self.config_path, "w"))
+        with open(self.config_path, "w") as out:
+            json.dump(data, out)
+        # Offline/busy marks are shared on purpose (they outlive settings reloads); start each test clean.
+        bulb_mod.BulbGroup._offline.clear()
+        bulb_mod.BulbGroup._busy.clear()
         env = mock.patch.dict(os.environ, {"MIBULB_CONFIG": self.config_path})
         env.start()
         self.addCleanup(env.stop)
@@ -73,6 +79,9 @@ class WindowTest(unittest.TestCase):
         if self.app.winfo_exists():
             self.app.quit_app()
         i18n.set_language("en")
+        # Clean up Tk variables now, on this thread; otherwise a background thread may do it later and
+        # Tkinter prints "main thread is not in main loop".
+        gc.collect()
 
     def pump(self, seconds):
         end = time.time() + seconds
@@ -332,10 +341,12 @@ class ApiAndExportTest(WindowTest):
     def test_export_and_import(self):
         path = os.path.join(tempfile.mkdtemp(), "export.json")
         config.export(self.app.cfg, Path(path))
-        exported = json.load(open(path))
+        with open(path) as source:
+            exported = json.load(source)
         self.assertEqual(exported["bulbs"][0]["token"], TOKEN)  # readable, to work on another PC
         exported["bulbs"] = exported["bulbs"][:1]
-        json.dump(exported, open(path, "w"))
+        with open(path, "w") as out:
+            json.dump(exported, out)
         self.app.import_settings(config.load(Path(path)))
         self.pump(0.5)
         self.assertEqual([b.name for b in config.load().bulbs], ["Desk"])

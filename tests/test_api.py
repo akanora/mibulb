@@ -27,7 +27,10 @@ class ApiServerTest(unittest.TestCase):
             with urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read())
         except HTTPError as error:
-            return error.code, json.loads(error.read())
+            try:
+                return error.code, json.loads(error.read())
+            finally:
+                error.close()
 
     def test_needs_the_key(self):
         status, body = self.get("/api/toggle")
