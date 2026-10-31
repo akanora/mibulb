@@ -17,8 +17,10 @@ DEVICE_ID = 0x1234ABCD
 class FakeBulb:
     """Answers hello packets and MIoT get/set_properties like the real bulb."""
 
-    def __init__(self, yeelight=False):
+    def __init__(self, yeelight=False, scenes=True):
         self.yeelight = yeelight
+        self.scenes = scenes  # whether set_scene is understood
+        self.methods = []
         self.token = bytes.fromhex(TOKEN)
         self.props = {1: False, 2: 50, 3: 4000, 4: 0xFFFFFF, 5: 2}
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -48,6 +50,7 @@ class FakeBulb:
             self.sock.sendto(miio.build_packet(self.token, DEVICE_ID, 1001, payload), addr)
 
     def _handle(self, method, params):
+        self.methods.append(method)
         if self.yeelight:
             return self._handle_yeelight(method, params)
         if method == "get_properties":
@@ -76,6 +79,14 @@ class FakeBulb:
             p[piid] = convert(params[0])
             if method in ("set_rgb", "set_ct_abx"):
                 p[5] = 1 if method == "set_rgb" else 2
+            return ["ok"]
+        if method == "set_scene" and self.scenes:
+            kind, value, bright = params
+            p[1], p[2] = True, bright
+            if kind == "color":
+                p[4], p[5] = value, 1
+            else:
+                p[3], p[5] = value, 2
             return ["ok"]
         return None
 
@@ -151,6 +162,38 @@ class BulbTest(unittest.TestCase):
     def test_detects_protocol(self):
         self.bulb.status()
         self.assertEqual(self.bulb.protocol, "yeelight" if self.yeelight else "miot")
+
+
+class SceneTest(unittest.TestCase):
+    def make(self, **kwargs):
+        fake = FakeBulb(**kwargs)
+        patcher = mock.patch.object(miio, "PORT", fake.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(fake.close)
+        return fake, Bulb("127.0.0.1", TOKEN)
+
+    def check(self, fake, bulb):
+        bulb.apply_scene(40, kelvin=2700)
+        state = bulb.status()
+        self.assertEqual((state.on, state.brightness, state.color_temperature, state.mode), (True, 40, 2700, 2))
+        bulb.apply_scene(60, rgb=0x7C3AED)
+        state = bulb.status()
+        self.assertEqual((state.on, state.brightness, state.color, state.mode), (True, 60, 0x7C3AED, 1))
+
+    def test_yeelight_set_scene(self):
+        fake, bulb = self.make(yeelight=True)
+        self.check(fake, bulb)
+        self.assertNotIn("set_power", fake.methods)  # done in one command each time
+
+    def test_yeelight_without_set_scene_falls_back(self):
+        fake, bulb = self.make(yeelight=True, scenes=False)
+        self.check(fake, bulb)
+        self.assertEqual(fake.methods.count("set_scene"), 1)  # probed once, then remembered
+
+    def test_miot(self):
+        fake, bulb = self.make()
+        self.check(fake, bulb)
 
 
 class YeelightBulbTest(BulbTest):

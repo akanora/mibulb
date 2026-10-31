@@ -8,7 +8,8 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 - Use the system-tray icon: click it to toggle, right-click for brightness and white presets
 - Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
-- Get a notice in the window when a new version is released
+- Scenes: one-click favourites like Reading, Relax, Movie and Gaming. Save your own and give them shortcuts.
+- Updates itself: new versions are downloaded, checked and installed automatically
 - Control it from the command line, for scripts, shortcuts or Task Scheduler
 - Scan the network to find the bulb's IP
 
@@ -71,6 +72,27 @@ If the router gives the bulb a new IP, Mi Bulb finds it again on the network by 
 
 To start Mi Bulb with Windows, turn on **Start with Windows** in settings → App. This works for the portable exe too.
 
+## Scenes
+
+The **Scenes** panel in the window has one-click favourites. It starts with Reading, Relax, Movie, Gaming and Night light.
+
+- **Click** a scene to apply it. It turns the light on and sets colour and brightness in one step.
+- **+ Save current** saves what the bulb is doing right now as a new scene.
+- **Right-click** a scene to update it to the current light, rename it, give it a shortcut or delete it.
+- Scenes also appear in the tray menu, and each one can have its own keyboard shortcut (Settings → Shortcuts).
+
+## Updates
+
+The installed version keeps itself up to date. When Mi Bulb starts, or when you click Settings → App → **Check now**, it:
+
+1. looks for a newer release on GitHub
+2. downloads `MiBulb-Setup.exe` and checks it against the SHA-256 that GitHub publishes for it. A file that doesn't match is deleted, never run.
+3. runs the installer silently. Mi Bulb closes, updates, and opens again. Your settings, scenes and start-with-Windows choice are kept.
+
+If you installed for all users (in `C:\Program Files`), Windows asks for permission first. If you cancel, Mi Bulb won't ask again at startup for that version, but **Check now** still offers it. You can turn automatic updates off in Settings → App.
+
+The portable exe can't replace itself while it runs, so it shows a download link instead.
+
 ## App settings
 
 Open settings with ⚙ in the window, or **Settings…** in the tray menu. The **App** tab has:
@@ -78,7 +100,7 @@ Open settings with ⚙ in the window, or **Settings…** in the tray menu. The *
 | Option | What it does |
 | --- | --- |
 | Start with Windows | Starts Mi Bulb in the tray when you sign in. This is the same setting as the installer's checkbox. |
-| Check for updates | Checks GitHub once at startup and shows a link in the window if a newer version exists. **Check now** checks right away. |
+| Install new versions automatically | Checks GitHub when Mi Bulb starts. If there's a new version, it downloads the installer, checks it against the SHA-256 published on GitHub, installs it and reopens Mi Bulb. **Check now** does the same right away. |
 | Open folder | Opens `%APPDATA%\mibulb`, where your settings and the bulb's token live. |
 | Forget this bulb | Removes the bulb's name, IP and token from this PC, but keeps your app options. |
 

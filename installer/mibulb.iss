@@ -1,6 +1,10 @@
 ; Inno Setup script for the Mi Bulb installer.
 ; Build the app first (dist\MiBulb\ from build.ps1), then:
-;   ISCC.exe /DAppVersion=0.2.0 installer\mibulb.iss
+;   ISCC.exe /DAppVersion=0.5.0 installer\mibulb.iss
+;
+; Mi Bulb updates itself by running this installer with
+;   /SILENT /SUPPRESSMSGBOXES /NORESTART /SP- /UPDATE [/RELAUNCH=--minimized]
+; /UPDATE waits for the running app to close and starts it again afterwards.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -31,8 +35,6 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Held by the running app, so setup and uninstall ask to close it first.
-AppMutex=MiBulbSingleInstance
 CloseApplications=yes
 
 [Tasks]
@@ -51,7 +53,8 @@ Name: "{autodesktop}\Mi Bulb"; Filename: "{app}\MiBulb.exe"; Tasks: desktopicon
 ; The first entry only makes sure uninstall removes it, even if it was
 ; turned on later from the app.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Mi Bulb"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Mi Bulb"; ValueData: """{app}\MiBulb.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: startup
+; Automatic updates leave it alone, so turning it off in the app sticks.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Mi Bulb"; ValueData: """{app}\MiBulb.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: startup; Check: not IsUpdate
 
 [InstallDelete]
 ; v0.2.0 used a Startup folder shortcut instead of the Run key.
@@ -59,6 +62,56 @@ Type: files; Name: "{userstartup}\Mi Bulb.lnk"
 
 [Run]
 Filename: "{app}\MiBulb.exe"; Description: "{cm:LaunchProgram,Mi Bulb}"; Flags: nowait postinstall skipifsilent
+; After an automatic update, start Mi Bulb again (as you, not as admin).
+Filename: "{app}\MiBulb.exe"; Parameters: "{param:RELAUNCH|}"; Flags: nowait runasoriginaluser; Check: IsUpdate
 
 ; Your settings in %APPDATA%\mibulb are kept on uninstall, so reinstalling
 ; doesn't need a new sign-in.
+
+[Code]
+const
+  AppMutexName = 'MiBulbSingleInstance';
+
+function IsUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/UPDATE') = 0 then
+      Result := True;
+end;
+
+{ Ask until Mi Bulb is closed. Returns False if the user gives up. }
+function WaitForAppToClose(): Boolean;
+var
+  Waited: Integer;
+begin
+  Result := True;
+  { An automatic update: Mi Bulb quits right after starting the installer. }
+  Waited := 0;
+  while IsUpdate and CheckForMutexes(AppMutexName) and (Waited < 20000) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  while CheckForMutexes(AppMutexName) do
+    if MsgBox('Mi Bulb is still running.' + #13#10#13#10 +
+              'Right-click its tray icon and choose Quit, then click OK.',
+              mbError, MB_OKCANCEL) <> IDOK then
+    begin
+      Result := False;
+      Exit;
+    end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := WaitForAppToClose();
+end;
+
+{ IsUpdate is always False here: uninstalling never waits, it asks. }
+function InitializeUninstall(): Boolean;
+begin
+  Result := WaitForAppToClose();
+end;

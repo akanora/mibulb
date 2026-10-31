@@ -67,6 +67,7 @@ class Bulb:
         if protocol not in ("auto", "yeelight", "miot"):
             raise ValueError(f"Unknown protocol {protocol!r}")
         self.protocol = protocol
+        self._scene_supported: bool | None = None
 
     # ---- protocol detection ------------------------------------------------
 
@@ -190,6 +191,46 @@ class Bulb:
             self._yeelight("set_rgb", rgb)
         else:
             self._miot_set(color=rgb)
+
+
+    def apply_scene(self, brightness: int, kelvin: int | None = None, rgb: int | None = None) -> None:
+        """Turn on and set brightness plus either a white temperature or a colour."""
+        brightness = max(1, min(100, int(brightness)))
+        if kelvin is not None:
+            kelvin = max(MIN_KELVIN, min(MAX_KELVIN, int(kelvin)))
+        if rgb is not None:
+            rgb = max(1, min(0xFFFFFF, int(rgb)))
+        if self._detect() == "yeelight":
+            # set_scene does it all in one command and turns the light on. Bulbs
+            # often ignore unknown commands silently, so probe it quickly once.
+            scene = ["color", rgb, brightness] if rgb is not None else ["ct", kelvin, brightness]
+            if self._scene_supported is not False:
+                timeout, retries = self.device.timeout, self.device.retries
+                if self._scene_supported is None:
+                    self.device.timeout, self.device.retries = 1.5, 0
+                try:
+                    ok = self.device.send("set_scene", scene) == ["ok"]
+                except MiIOError:
+                    ok = False
+                finally:
+                    self.device.timeout, self.device.retries = timeout, retries
+                self._scene_supported = ok
+                if ok:
+                    return
+            # Step by step for firmware without set_scene
+            self._yeelight("set_power", "on")
+            if rgb is not None:
+                self._yeelight("set_rgb", rgb)
+            else:
+                self._yeelight("set_ct_abx", kelvin)
+            self._yeelight("set_bright", brightness)
+        else:
+            values: dict[str, object] = {"on": True, "brightness": brightness}
+            if rgb is not None:
+                values["color"] = rgb
+            else:
+                values["color_temperature"] = kelvin
+            self._miot_set(**values)
 
 
 def parse_color(text: str) -> int:

@@ -15,6 +15,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .scenes import Scene, default_scenes
+
 # Keyboard shortcut actions: (id, label, default shortcut). "" means not set.
 # Only combinations unlikely to clash with typing are set by default: on many
 # layouts Ctrl+Alt+<letter or digit> types a character (AltGr), so most are
@@ -58,8 +60,10 @@ class Config:
     properties: dict[str, int] = field(default_factory=dict)
     # App preferences (start with Windows lives in the registry, see startup.py)
     hotkey: bool = True  # keyboard shortcuts on/off
-    check_updates: bool = True
+    check_updates: bool = True  # check, download and install updates automatically
+    skipped_update: str = ""  # a version whose automatic install was cancelled
     shortcuts: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))
+    scenes: list[Scene] = field(default_factory=default_scenes)
 
     @property
     def is_complete(self) -> bool:
@@ -79,9 +83,11 @@ def load(path: Path | None = None) -> Config:
         properties=data.get("properties", {}),
         hotkey=bool(data.get("hotkey", True)),
         check_updates=bool(data.get("check_updates", True)),
+        skipped_update=str(data.get("skipped_update", "")),
         # Defaults first, so actions added in a later version get theirs.
         shortcuts={**DEFAULT_SHORTCUTS, **{k: str(v) for k, v in data.get("shortcuts", {}).items()
-                                           if k in DEFAULT_SHORTCUTS}},
+                                           if k in DEFAULT_SHORTCUTS or k.startswith("scene:")}},
+        scenes=[Scene.from_dict(d) for d in data["scenes"]] if "scenes" in data else default_scenes(),
     )
 
 
@@ -95,7 +101,10 @@ def save(config: Config, path: Path | None = None) -> Path:
         data["properties"] = config.properties
     data["hotkey"] = config.hotkey
     data["check_updates"] = config.check_updates
+    if config.skipped_update:
+        data["skipped_update"] = config.skipped_update
     data["shortcuts"] = config.shortcuts
+    data["scenes"] = [scene.to_dict() for scene in config.scenes]
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -103,4 +112,4 @@ def save(config: Config, path: Path | None = None) -> Path:
 def forget_bulb(config: Config) -> Config:
     """Return a copy without the bulb's name, IP, token and device id, keeping app preferences."""
     return Config(properties=config.properties, hotkey=config.hotkey, check_updates=config.check_updates,
-                  shortcuts=dict(config.shortcuts))
+                  shortcuts=dict(config.shortcuts), scenes=list(config.scenes))

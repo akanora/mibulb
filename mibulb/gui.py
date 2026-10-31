@@ -9,13 +9,14 @@ import threading
 import tkinter as tk
 import webbrowser
 from collections import OrderedDict
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
 from . import __version__, hotkey, startup, updates
 from . import config as config_mod
 from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbState
 from .cloud import Cancelled, CloudDevice, QrLogin, XiaomiCloud
+from .scenes import Scene
 from .miio import DeviceUnreachable, MiIOError, discover, find_ip
 
 try:
@@ -295,7 +296,7 @@ class SettingsDialog(tk.Toplevel):
 
         section("Updates")
         self.updates_var = tk.BooleanVar(value=self._app.cfg.check_updates)
-        ttk.Checkbutton(tab, text="Check for a new version when Mi Bulb starts",
+        ttk.Checkbutton(tab, text="Install new versions automatically (checked when Mi Bulb starts)",
                         variable=self.updates_var, command=self._toggle_updates).pack(anchor="w")
         row = ttk.Frame(tab)
         row.pack(fill="x", pady=(4, 0))
@@ -338,7 +339,9 @@ class SettingsDialog(tk.Toplevel):
         grid.columnconfigure(2, weight=1)
         self._key_buttons: dict[str, ttk.Button] = {}
         self._key_status: dict[str, ttk.Label] = {}
-        for row, (action, label, _default) in enumerate(config_mod.SHORTCUT_ACTIONS):
+        self._shortcut_rows = [(action, label) for action, label, _default in config_mod.SHORTCUT_ACTIONS]
+        self._shortcut_rows += [(f"scene:{scene.id}", f"Scene: {scene.name}") for scene in self._app.cfg.scenes]
+        for row, (action, label) in enumerate(self._shortcut_rows):
             ttk.Label(grid, text=label).grid(row=row, column=0, sticky="w", pady=2)
             button = ttk.Button(grid, width=22, command=lambda a=action: self._start_capture(a))
             button.grid(row=row, column=1, sticky="w", padx=(12, 8), pady=2)
@@ -408,7 +411,7 @@ class SettingsDialog(tk.Toplevel):
             self._key_status[action].configure(text=str(exc), foreground=ERROR)
             return "break"
         text = hotkey.format_shortcut(modifiers, key)
-        for other, label, _default in config_mod.SHORTCUT_ACTIONS:
+        for other, label in self._shortcut_rows:
             if other != action and self._app.cfg.shortcuts.get(other) == text:
                 self._key_status[action].configure(text=f"{text} is already used for {label}.", foreground=ERROR)
                 return "break"
@@ -447,11 +450,21 @@ class SettingsDialog(tk.Toplevel):
             self.update_status.configure(text="Couldn't reach GitHub.", foreground=ERROR)
         elif result is None:
             self.update_status.configure(text="You have the latest version.", foreground=MUTED)
+        elif updates.is_installed():
+            self.update_status.configure(text=f"Installing version {result.version}…", foreground=ACCENT)
+            self.update_button.configure(state="disabled")
+            self._app.start_update(result, automatic=False, on_status=self._update_progress)
         else:
             self._app.show_update(result)
-            self.update_status.configure(text=f"Version {result.version} is available. Click to open.",
+            self.update_status.configure(text=f"Version {result.version} is available. Click to download.",
                                          foreground=ACCENT, cursor="hand2")
             self.update_status.bind("<Button-1>", lambda _e: webbrowser.open(result.url))
+
+    def _update_progress(self, text: str, error: bool) -> None:
+        if self.winfo_exists():
+            self.update_status.configure(text=text, foreground=ERROR if error else ACCENT)
+            if error:
+                self.update_button.configure(state="normal")
 
     def _open_data_folder(self) -> None:
         folder = config_mod.find_config_path().parent
@@ -574,6 +587,7 @@ class App(tk.Tk):
         self.tray = None
         self.hotkeys = hotkey.HotkeyManager(lambda action: self._ui_calls.put(lambda: self.run_shortcut(action)))
         self.shortcut_problems: dict[str, str] = {}
+        self._updating = False
         self._settings_open = False
 
         self._build()
@@ -586,8 +600,7 @@ class App(tk.Tk):
         except OSError:
             pass
         if self.cfg.check_updates:
-            run_in_thread(self._ui_calls.put, updates.check,
-                          lambda r: self.show_update(r) if isinstance(r, updates.Update) else None)
+            run_in_thread(self._ui_calls.put, updates.check, self._startup_update)
 
         if Image is not None:
             self._icons = [ImageTk.PhotoImage(make_icon_image(size=n)) for n in (64, 32, 16)]
@@ -672,6 +685,18 @@ class App(tk.Tk):
             swatch = tk.Label(swatches, bg=color, width=3, height=1, cursor="hand2")
             swatch.pack(side="left", expand=True, padx=2)
             swatch.bind("<Button-1>", lambda _e, c=color: self._set_color(c))
+
+        scenes = ttk.Frame(root, style="Panel.TFrame", padding=12)
+        scenes.pack(fill="x", pady=(8, 0))
+        top = ttk.Frame(scenes, style="Panel.TFrame")
+        top.pack(fill="x")
+        ttk.Label(top, text="Scenes", style="Panel.TLabel").pack(side="left")
+        ttk.Button(top, text="+ Save current", command=self.save_current_scene).pack(side="right")
+        self.scenes_grid = tk.Frame(scenes, bg=PANEL)
+        self.scenes_grid.pack(fill="x", pady=(10, 0))
+        ttk.Label(scenes, text="Click to apply · right-click to update, rename or delete",
+                  style="PanelMuted.TLabel").pack(anchor="w", pady=(8, 0))
+        self._render_scenes()
 
         self.status_label = ttk.Label(root, text="", style="Muted.TLabel")
         self.status_label.pack(fill="x", pady=(12, 0))
@@ -774,6 +799,114 @@ class App(tk.Tk):
         self._sync_slider(self.kelvin_label, kelvin)
         self._run("colour", lambda b: b.set_color_temperature(kelvin), refresh=True)
 
+    # ---- scenes ---------------------------------------------------------------
+
+    def _render_scenes(self) -> None:
+        for child in self.scenes_grid.winfo_children():
+            child.destroy()
+        chip_bg, chip_hover = "#3a3d46", "#474a55"
+        columns = 3
+        for column in range(columns):
+            self.scenes_grid.columnconfigure(column, weight=1, uniform="scene")
+        for index, scene in enumerate(self.cfg.scenes):
+            chip = tk.Frame(self.scenes_grid, bg=chip_bg, cursor="hand2")
+            chip.grid(row=index // columns, column=index % columns, sticky="we", padx=2, pady=2)
+            swatch = tk.Label(chip, bg=scene.swatch, width=2)
+            swatch.pack(side="left", fill="y")
+            name = tk.Label(chip, text=scene.name, bg=chip_bg, fg=TEXT, font=("Segoe UI", 9), anchor="w",
+                            padx=6, pady=5)
+            name.pack(side="left", fill="x", expand=True)
+            for widget in (chip, swatch, name):
+                widget.bind("<Button-1>", lambda _e, sc=scene: self.apply_scene(sc))
+                widget.bind("<Button-3>", lambda e, sc=scene: self._scene_menu(e, sc))
+            for widget in (chip, name):
+                widget.bind("<Enter>", lambda _e, w=(chip, name): [x.configure(bg=chip_hover) for x in w])
+                widget.bind("<Leave>", lambda _e, w=(chip, name): [x.configure(bg=chip_bg) for x in w])
+        if not self.cfg.scenes:
+            tk.Label(self.scenes_grid, text="No scenes yet", bg=PANEL, fg=MUTED,
+                     font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=columns, sticky="w")
+
+    def _scenes_changed(self) -> None:
+        config_mod.save(self.cfg)
+        self._render_scenes()
+        if self.tray is not None:
+            self.tray.update_menu()
+
+    def apply_scene(self, scene: Scene) -> None:
+        if scene.is_color:
+            self.color_swatch.configure(bg=scene.swatch)
+            self._run("colour", lambda b: b.apply_scene(scene.brightness, rgb=scene.color), refresh=True)
+        else:
+            self._sync_slider(self.kelvin_label, scene.kelvin)
+            self._run("colour", lambda b: b.apply_scene(scene.brightness, kelvin=scene.kelvin), refresh=True)
+        self._sync_slider(self.brightness_label, scene.brightness)
+
+    def apply_scene_id(self, scene_id: str) -> None:
+        scene = next((sc for sc in self.cfg.scenes if sc.id == scene_id), None)
+        if scene is not None:
+            self.apply_scene(scene)
+
+    def _with_current_state(self, then: Callable[[BulbState], None]) -> None:
+        """Read the bulb fresh (sliders may have moved since the last refresh), then continue."""
+        bulb = self.bulb
+        if bulb is None:
+            self._set_status("Add your bulb first (⚙).", error=True)
+            return
+
+        def done(result: Any) -> None:
+            if isinstance(result, Exception):
+                self._set_status(str(result), error=True)
+            else:
+                self._show_state(result)
+                then(result)
+
+        self.worker.submit("status", bulb.status, done)
+
+    def save_current_scene(self) -> None:
+        def ask(state: BulbState) -> None:
+            name = simpledialog.askstring("Save scene", "Name for this scene:", parent=self)
+            if name and name.strip():
+                self.cfg.scenes.append(Scene.from_state(name.strip()[:30], state))
+                self._scenes_changed()
+                self._set_status(f"Saved scene \"{name.strip()}\". Give it a shortcut in settings.")
+
+        self._with_current_state(ask)
+
+    def _scene_menu(self, event: tk.Event, scene: Scene) -> None:
+        menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+        menu.add_command(label="Apply", command=lambda: self.apply_scene(scene))
+        menu.add_command(label="Update to current light", command=lambda: self._update_scene(scene))
+        menu.add_command(label="Rename…", command=lambda: self._rename_scene(scene))
+        menu.add_command(label="Set shortcut…", command=lambda: self.open_settings("shortcuts"))
+        menu.add_separator()
+        menu.add_command(label="Delete", command=lambda: self._delete_scene(scene))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _update_scene(self, scene: Scene) -> None:
+        def update(state: BulbState) -> None:
+            fresh = Scene.from_state(scene.name, state)
+            fresh.id = scene.id
+            self.cfg.scenes = [fresh if sc.id == scene.id else sc for sc in self.cfg.scenes]
+            self._scenes_changed()
+            self._set_status(f"Updated scene \"{scene.name}\".")
+
+        self._with_current_state(update)
+
+    def _rename_scene(self, scene: Scene) -> None:
+        name = simpledialog.askstring("Rename scene", "New name:", initialvalue=scene.name, parent=self)
+        if name and name.strip():
+            scene.name = name.strip()[:30]
+            self._scenes_changed()
+
+    def _delete_scene(self, scene: Scene) -> None:
+        if not messagebox.askyesno("Delete scene", f"Delete the scene \"{scene.name}\"?", parent=self):
+            return
+        self.cfg.scenes = [sc for sc in self.cfg.scenes if sc.id != scene.id]
+        had_shortcut = self.cfg.shortcuts.pop(f"scene:{scene.id}", "")
+        self._scenes_changed()
+        if had_shortcut:
+            self.apply_shortcuts()
+
     def _set_color(self, hex_color: str) -> None:
         self.color_swatch.configure(bg=hex_color)
         rgb = int(hex_color.lstrip("#"), 16)
@@ -861,6 +994,8 @@ class App(tk.Tk):
             self._step_brightness(10 if action == "brighter" else -10)
         elif action in whites:
             self._set_kelvin(whites[action])
+        elif action.startswith("scene:"):
+            self.apply_scene_id(action.split(":", 1)[1])
         elif action == "window":
             self.show()
 
@@ -871,9 +1006,59 @@ class App(tk.Tk):
         self._run("brightness", lambda b: b.set_brightness(value))
 
     def show_update(self, update: updates.Update) -> None:
-        self.update_label.configure(text=f"Mi Bulb {update.version} is available. Click to download.")
+        self.update_label.configure(text=f"Mi Bulb {update.version} is available. Click to download.",
+                                    foreground=ACCENT)
         self.update_label.bind("<Button-1>", lambda _e: webbrowser.open(update.url))
         self.update_label.pack(fill="x", pady=(4, 0))
+
+    def _startup_update(self, result: Any) -> None:
+        if not isinstance(result, updates.Update):
+            return  # up to date, or offline: try again next start
+        if updates.is_installed() and result.version != self.cfg.skipped_update:
+            self.start_update(result, automatic=True)
+        else:
+            self.show_update(result)
+
+    def start_update(self, update: updates.Update, automatic: bool,
+                     on_status: Callable[[str, bool], None] | None = None) -> None:
+        """Download, verify and run the installer, then quit so it can replace the app."""
+        if self._updating:
+            return
+        self._updating = True
+
+        def status(text: str, error: bool = False) -> None:
+            self.update_label.configure(text=text, foreground=ERROR if error else ACCENT)
+            self.update_label.unbind("<Button-1>")
+            self.update_label.pack(fill="x", pady=(4, 0))
+            if on_status is not None:
+                on_status(text, error)
+
+        def progress(percent: int) -> None:
+            self._ui_calls.put(lambda: status(f"Downloading Mi Bulb {update.version}… {percent}%"))
+
+        def downloaded(result: Any) -> None:
+            if isinstance(result, Exception):
+                self._updating = False
+                status(f"Update failed: {result}", error=True)
+                return
+            status(f"Installing Mi Bulb {update.version}. It will reopen by itself.")
+            minimized = self.state() == "withdrawn"
+            try:
+                updates.launch_installer(result, minimized)
+            except OSError:
+                # Usually the admin prompt was cancelled. Don't ask again on every start.
+                self._updating = False
+                if automatic:
+                    self.cfg.skipped_update = update.version
+                    config_mod.save(self.cfg)
+                status(f"Update to {update.version} was cancelled. Use Settings → App → Check now to retry.",
+                       error=True)
+                return
+            # The installer waits for this copy to close before replacing it.
+            self.after(500, self.quit_app)
+
+        status(f"Downloading Mi Bulb {update.version}…")
+        run_in_thread(self._ui_calls.put, lambda: updates.download(update, progress), downloaded)
 
     def forget_bulb(self) -> None:
         self.cfg = config_mod.forget_bulb(self.cfg)
@@ -906,6 +1091,9 @@ class App(tk.Tk):
             # pystray only accepts callbacks with at most two parameters.
             return lambda: post(lambda: func(value))
 
+        def scene_action(scene_id: str) -> Callable[[], None]:
+            return lambda: post(lambda: self.apply_scene_id(scene_id))
+
         menu = pystray.Menu(
             pystray.MenuItem("Toggle", lambda: post(self.toggle), default=True),
             pystray.MenuItem("Turn on", lambda: post(lambda: self.turn(True))),
@@ -918,6 +1106,10 @@ class App(tk.Tk):
                 pystray.MenuItem(name, action(self._set_kelvin, kelvin))
                 for name, kelvin in PRESET_WHITES
             ])),
+            # A callable menu is rebuilt each time it opens, so it follows scene edits.
+            pystray.MenuItem("Scenes", pystray.Menu(lambda: (
+                pystray.MenuItem(scene.name, scene_action(scene.id)) for scene in self.cfg.scenes
+            ))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open window", lambda: post(self.show)),
             pystray.MenuItem("Settings…", lambda: post(lambda: self.open_settings("app"))),
