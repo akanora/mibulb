@@ -6,7 +6,7 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 
 - Turn the light on or off, set brightness, white temperature (1700–6500 K) and RGB colour
 - Use the system-tray icon: click it to toggle, right-click for brightness and white presets
-- Press **Ctrl+Alt+L** anywhere to toggle the light
+- Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
 - Get a notice in the window when a new version is released
 - Control it from the command line, for scripts, shortcuts or Task Scheduler
@@ -78,12 +78,26 @@ Open settings with ⚙ in the window, or **Settings…** in the tray menu. The *
 | Option | What it does |
 | --- | --- |
 | Start with Windows | Starts Mi Bulb in the tray when you sign in. This is the same setting as the installer's checkbox. |
-| Ctrl+Alt+L | Toggles the light from any app. If another app already uses this shortcut, Mi Bulb tells you. |
 | Check for updates | Checks GitHub once at startup and shows a link in the window if a newer version exists. **Check now** checks right away. |
 | Open folder | Opens `%APPDATA%\mibulb`, where your settings and the bulb's token live. |
 | Forget this bulb | Removes the bulb's name, IP and token from this PC, but keeps your app options. |
 
 App options are saved as soon as you change them.
+
+### Keyboard shortcuts
+
+The **Shortcuts** tab lists every action. Click a shortcut and press the keys you want. Esc cancels, and Backspace clears it. Shortcuts work in any app, including games, and you can turn them all off with one checkbox.
+
+| Action | Default |
+| --- | --- |
+| Toggle light | Ctrl+Alt+L |
+| Brighter (+10%) | Ctrl+Alt+PageUp |
+| Dimmer (−10%) | Ctrl+Alt+PageDown |
+| Turn on, Turn off, Warm white, Neutral white, Daylight, Show Mi Bulb window | not set |
+
+A shortcut needs Ctrl, Alt or Win, so normal typing isn't blocked. F13–F24 also work on their own. If Windows or another app already uses a combination, the tab says so next to it.
+
+On some keyboard layouts (for example Turkish, German or Polish), Ctrl+Alt+<key> is the same as AltGr+<key> and types a special character. That's why only a few defaults are set. If a character stops working, give that action a different shortcut.
 
 ## Command line
 

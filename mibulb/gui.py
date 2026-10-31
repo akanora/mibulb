@@ -210,11 +210,14 @@ class SettingsDialog(tk.Toplevel):
         body = ttk.Frame(notebook, padding=16)
         body.columnconfigure(1, weight=1)
         app_tab = ttk.Frame(notebook, padding=16)
+        keys_tab = ttk.Frame(notebook, padding=16)
         notebook.add(body, text="Bulb")
         notebook.add(app_tab, text="App")
+        notebook.add(keys_tab, text="Shortcuts")
+        self._capturing: str | None = None
         self._build_app_tab(app_tab)
-        if tab == "app":
-            notebook.select(app_tab)
+        self._build_shortcuts_tab(keys_tab)
+        notebook.select({"app": app_tab, "shortcuts": keys_tab}.get(tab, body))
 
         ttk.Label(body, text="Find your bulb automatically", style="Title.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w"
@@ -265,8 +268,10 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(buttons, text="Save bulb", style="Accent.TButton", command=self._save).pack(side="right")
         ttk.Label(buttons, text="App options are saved as you change them.", style="Muted.TLabel").pack(side="left")
 
-        self.bind("<Return>", lambda _e: self._save())
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind("<Return>", lambda _e: None if self._capturing else self._save())
+        self.bind("<Escape>", lambda _e: self._end_capture() if self._capturing else self.destroy())
+        self.bind("<KeyPress>", self._capture_key)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
 
     def _toggle_token(self) -> None:
@@ -287,16 +292,6 @@ class SettingsDialog(tk.Toplevel):
         box.pack(anchor="w")
         if not startup.supported():
             box.configure(state="disabled")
-
-        section("Keyboard shortcut")
-        self.hotkey_var = tk.BooleanVar(value=self._app.cfg.hotkey)
-        box = ttk.Checkbutton(tab, text=f"{hotkey.DEFAULT_LABEL} toggles the light from any app",
-                              variable=self.hotkey_var, command=self._toggle_hotkey)
-        box.pack(anchor="w")
-        if not hotkey.supported():
-            box.configure(state="disabled")
-        self.hotkey_status = ttk.Label(tab, text=self._app.hotkey_problem or "", style="Muted.TLabel")
-        self.hotkey_status.pack(anchor="w")
 
         section("Updates")
         self.updates_var = tk.BooleanVar(value=self._app.cfg.check_updates)
@@ -328,11 +323,112 @@ class SettingsDialog(tk.Toplevel):
             self.startup_var.set(startup.is_enabled())
             messagebox.showerror("Start with Windows", f"Could not change the setting: {exc}", parent=self)
 
-    def _toggle_hotkey(self) -> None:
-        problem = self._app.set_hotkey(self.hotkey_var.get())
-        self.hotkey_status.configure(text=problem or "", foreground=ERROR if problem else MUTED)
-        if problem:
-            self.hotkey_var.set(False)
+    # ---- Shortcuts tab ----------------------------------------------------
+
+    def _build_shortcuts_tab(self, tab: ttk.Frame) -> None:
+        self.shortcuts_var = tk.BooleanVar(value=self._app.cfg.hotkey)
+        box = ttk.Checkbutton(tab, text="Use keyboard shortcuts (they work in any app)",
+                              variable=self.shortcuts_var, command=self._toggle_shortcuts)
+        box.pack(anchor="w")
+        if not hotkey.supported():
+            box.configure(state="disabled")
+
+        grid = ttk.Frame(tab)
+        grid.pack(fill="x", pady=(12, 0))
+        grid.columnconfigure(2, weight=1)
+        self._key_buttons: dict[str, ttk.Button] = {}
+        self._key_status: dict[str, ttk.Label] = {}
+        for row, (action, label, _default) in enumerate(config_mod.SHORTCUT_ACTIONS):
+            ttk.Label(grid, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            button = ttk.Button(grid, width=22, command=lambda a=action: self._start_capture(a))
+            button.grid(row=row, column=1, sticky="w", padx=(12, 8), pady=2)
+            status = ttk.Label(grid, text="", style="Muted.TLabel")
+            status.grid(row=row, column=2, sticky="w")
+            self._key_buttons[action] = button
+            self._key_status[action] = status
+
+        ttk.Label(
+            tab,
+            text="Click a shortcut, then press the keys you want. Esc cancels, Backspace clears it.\n"
+            "On some keyboard layouts Ctrl+Alt+<key> also types a special character (AltGr). "
+            "If a character stops working, pick a different shortcut.",
+            style="Muted.TLabel",
+            wraplength=420,
+        ).pack(anchor="w", pady=(12, 8))
+        ttk.Button(tab, text="Reset to defaults", command=self._reset_shortcuts).pack(anchor="w")
+        self._refresh_shortcuts()
+
+    def _refresh_shortcuts(self, message: tuple[str, str] | None = None) -> None:
+        enabled = self._app.cfg.hotkey and hotkey.supported()
+        for action, button in self._key_buttons.items():
+            text = self._app.cfg.shortcuts.get(action, "")
+            button.configure(text=text or "Not set", state="normal" if enabled else "disabled")
+            problem = self._app.shortcut_problems.get(action) if enabled and text else None
+            self._key_status[action].configure(text=problem or "", foreground=ERROR)
+        if message:
+            action, text = message
+            self._key_status[action].configure(text=text, foreground=ERROR)
+
+    def _toggle_shortcuts(self) -> None:
+        self._app.set_shortcuts_enabled(self.shortcuts_var.get())
+        self._refresh_shortcuts()
+
+    def _reset_shortcuts(self) -> None:
+        self._end_capture(apply=False)
+        self._app.reset_shortcuts()
+        self._refresh_shortcuts()
+
+    def _start_capture(self, action: str) -> None:
+        self._end_capture(apply=False)
+        self._capturing = action
+        # Registered shortcuts would swallow the keys, so pause them while recording.
+        self._app.suspend_shortcuts()
+        self._key_buttons[action].configure(text="Press keys…")
+        self._key_status[action].configure(text="Esc to cancel", foreground=MUTED)
+        self.focus_set()  # keep Space/Enter away from the buttons
+
+    def _capture_key(self, event: tk.Event) -> str | None:
+        action = self._capturing
+        if action is None:
+            return None
+        key = event.keycode  # the Windows virtual-key code
+        if key in hotkey.MODIFIER_KEYS:
+            return "break"
+        modifiers = hotkey.pressed_modifiers()
+        if key == 0x1B and not modifiers:  # Esc
+            self._end_capture()
+            return "break"
+        if key in (0x08, 0x2E) and not modifiers:  # Backspace / Delete clear it
+            self._app.set_shortcut(action, "")
+            self._end_capture()
+            return "break"
+        try:
+            hotkey.validate(modifiers, key)
+        except hotkey.ShortcutError as exc:
+            self._key_status[action].configure(text=str(exc), foreground=ERROR)
+            return "break"
+        text = hotkey.format_shortcut(modifiers, key)
+        for other, label, _default in config_mod.SHORTCUT_ACTIONS:
+            if other != action and self._app.cfg.shortcuts.get(other) == text:
+                self._key_status[action].configure(text=f"{text} is already used for {label}.", foreground=ERROR)
+                return "break"
+        self._app.set_shortcut(action, text)
+        self._end_capture()
+        return "break"
+
+    def _end_capture(self, apply: bool = True) -> None:
+        if self._capturing is None:
+            return
+        self._capturing = None
+        if apply:
+            self._app.apply_shortcuts()
+        self._refresh_shortcuts()
+
+    def destroy(self) -> None:
+        if self._capturing is not None:
+            self._capturing = None
+            self._app.apply_shortcuts()
+        super().destroy()
 
     def _toggle_updates(self) -> None:
         self._app.cfg.check_updates = self.updates_var.get()
@@ -456,6 +552,7 @@ class SettingsDialog(tk.Toplevel):
             properties=self._cfg.properties,
             hotkey=self._app.cfg.hotkey,
             check_updates=self._app.cfg.check_updates,
+            shortcuts=self._app.cfg.shortcuts,
         )
         self.destroy()
 
@@ -475,15 +572,15 @@ class App(tk.Tk):
         self._ui_calls: queue.Queue[Callable[[], None]] = queue.Queue()
         self.worker = Worker(self._ui_calls.put)
         self.tray = None
-        self._hotkey: hotkey.GlobalHotkey | None = None
-        self.hotkey_problem: str | None = None
+        self.hotkeys = hotkey.HotkeyManager(lambda action: self._ui_calls.put(lambda: self.run_shortcut(action)))
+        self.shortcut_problems: dict[str, str] = {}
         self._settings_open = False
 
         self._build()
         self._apply_config()
         self._poll_ui_calls()
         self._start_tray()
-        self.set_hotkey(self.cfg.hotkey)
+        self.apply_shortcuts()
         try:
             startup.repair()
         except OSError:
@@ -733,23 +830,45 @@ class App(tk.Tk):
 
     # ---- app options ------------------------------------------------------
 
-    def set_hotkey(self, enabled: bool) -> str | None:
-        """Turn the global shortcut on or off. Returns a problem description, if any."""
-        if self._hotkey is not None:
-            self._hotkey.stop()
-            self._hotkey = None
-        self.hotkey_problem = None
-        if enabled and hotkey.supported():
-            shortcut = hotkey.GlobalHotkey(lambda: self._ui_calls.put(self.toggle))
-            if shortcut.start():
-                self._hotkey = shortcut
-            else:
-                self.hotkey_problem = f"{hotkey.DEFAULT_LABEL} is already used by another app."
-                enabled = False
-        if self.cfg.hotkey != enabled and not self.hotkey_problem:
-            self.cfg.hotkey = enabled
-            config_mod.save(self.cfg)
-        return self.hotkey_problem
+    def apply_shortcuts(self) -> None:
+        bindings = self.cfg.shortcuts if self.cfg.hotkey else {}
+        self.shortcut_problems = self.hotkeys.apply(bindings)
+
+    def suspend_shortcuts(self) -> None:
+        self.hotkeys.stop()
+
+    def set_shortcuts_enabled(self, enabled: bool) -> None:
+        self.cfg.hotkey = enabled
+        config_mod.save(self.cfg)
+        self.apply_shortcuts()
+
+    def set_shortcut(self, action: str, text: str) -> None:
+        self.cfg.shortcuts[action] = text
+        config_mod.save(self.cfg)
+
+    def reset_shortcuts(self) -> None:
+        self.cfg.shortcuts = dict(config_mod.DEFAULT_SHORTCUTS)
+        config_mod.save(self.cfg)
+        self.apply_shortcuts()
+
+    def run_shortcut(self, action: str) -> None:
+        whites = {"warm": 2700, "neutral": 4000, "daylight": 6500}
+        if action == "toggle":
+            self.toggle()
+        elif action in ("on", "off"):
+            self.turn(action == "on")
+        elif action in ("brighter", "dimmer"):
+            self._step_brightness(10 if action == "brighter" else -10)
+        elif action in whites:
+            self._set_kelvin(whites[action])
+        elif action == "window":
+            self.show()
+
+    def _step_brightness(self, delta: int) -> None:
+        # The slider holds the latest value, so quick repeated presses add up.
+        value = max(1, min(100, self.brightness.get() + delta))
+        self._sync_slider(self.brightness_label, value)
+        self._run("brightness", lambda b: b.set_brightness(value))
 
     def show_update(self, update: updates.Update) -> None:
         self.update_label.configure(text=f"Mi Bulb {update.version} is available. Click to download.")
@@ -828,8 +947,7 @@ class App(tk.Tk):
 
     def quit_app(self) -> None:
         self.after_cancel(self._poll_id)
-        if self._hotkey is not None:
-            self._hotkey.stop()
+        self.hotkeys.stop()
         if self.tray is not None:
             self.tray.stop()
         self.destroy()

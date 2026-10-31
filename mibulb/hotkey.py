@@ -1,4 +1,8 @@
-"""A system-wide keyboard shortcut (Windows only), e.g. Ctrl+Alt+L to toggle the light."""
+"""System-wide keyboard shortcuts (Windows only).
+
+Shortcuts are stored as text like "Ctrl+Alt+L" and registered with the
+Windows RegisterHotKey API on a dedicated thread that runs a message loop.
+"""
 
 from __future__ import annotations
 
@@ -8,55 +12,129 @@ from typing import Callable
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 
-DEFAULT_LABEL = "Ctrl+Alt+L"
-DEFAULT_MODIFIERS = MOD_CONTROL | MOD_ALT
-DEFAULT_KEY = ord("L")
+MODIFIERS = [("Ctrl", MOD_CONTROL), ("Alt", MOD_ALT), ("Shift", MOD_SHIFT), ("Win", MOD_WIN)]
+
+# Windows virtual-key codes for keys that can be used in a shortcut.
+KEY_NAMES: dict[int, str] = {
+    **{code: chr(code) for code in range(0x41, 0x5B)},  # A-Z
+    **{code: chr(code) for code in range(0x30, 0x3A)},  # 0-9
+    **{0x70 + i: f"F{i + 1}" for i in range(24)},  # F1-F24
+    **{0x60 + i: f"Num{i}" for i in range(10)},  # numpad 0-9
+    0x20: "Space",
+    0x21: "PageUp",
+    0x22: "PageDown",
+    0x23: "End",
+    0x24: "Home",
+    0x25: "Left",
+    0x26: "Up",
+    0x27: "Right",
+    0x28: "Down",
+    0x2D: "Insert",
+    0x2E: "Delete",
+    0x13: "Pause",
+}
+KEY_CODES = {name.lower(): code for code, name in KEY_NAMES.items()}
+
+# Keys that make sense on their own, without Ctrl/Alt/Win (nothing else uses them).
+STANDALONE_KEYS = {0x7C + i for i in range(12)}  # F13-F24
 
 
 def supported() -> bool:
     return sys.platform == "win32"
 
 
-class GlobalHotkey:
-    """Registers a hotkey on its own thread, which runs a Windows message loop."""
+class ShortcutError(ValueError):
+    pass
 
-    def __init__(self, callback: Callable[[], None], modifiers: int = DEFAULT_MODIFIERS, key: int = DEFAULT_KEY):
+
+def parse(text: str) -> tuple[int, int]:
+    """Parse "Ctrl+Alt+L" into (modifiers, virtual-key code)."""
+    parts = [p.strip() for p in text.split("+") if p.strip()]
+    if not parts:
+        raise ShortcutError("Empty shortcut")
+    modifiers = 0
+    names = {name.lower(): flag for name, flag in MODIFIERS}
+    for part in parts[:-1]:
+        flag = names.get(part.lower())
+        if flag is None:
+            raise ShortcutError(f"Unknown modifier {part!r}")
+        modifiers |= flag
+    key = KEY_CODES.get(parts[-1].lower())
+    if key is None:
+        raise ShortcutError(f"Unknown key {parts[-1]!r}")
+    validate(modifiers, key)
+    return modifiers, key
+
+
+def validate(modifiers: int, key: int) -> None:
+    if key not in KEY_NAMES:
+        raise ShortcutError("That key can't be used in a shortcut.")
+    if not modifiers & (MOD_CONTROL | MOD_ALT | MOD_WIN) and key not in STANDALONE_KEYS:
+        raise ShortcutError("Use Ctrl, Alt or Win together with the key, so normal typing isn't blocked.")
+
+
+def format_shortcut(modifiers: int, key: int) -> str:
+    names = [name for name, flag in MODIFIERS if modifiers & flag]
+    return "+".join(names + [KEY_NAMES[key]])
+
+
+class HotkeyManager:
+    """Registers a set of shortcuts and calls back with the action name when one is pressed."""
+
+    def __init__(self, callback: Callable[[str], None]):
         self._callback = callback
-        self._modifiers = modifiers
-        self._key = key
-        self._thread_id = 0
         self._thread: threading.Thread | None = None
+        self._thread_id = 0
 
-    def start(self) -> bool:
-        """Return False if the shortcut is already taken by another app."""
+    def apply(self, bindings: dict[str, str]) -> dict[str, str]:
+        """Replace all registered shortcuts. Returns {action: problem} for ones that failed."""
+        self.stop()
+        problems: dict[str, str] = {}
+        parsed: list[tuple[str, int, int]] = []
+        for action, text in bindings.items():
+            if not text:
+                continue
+            try:
+                modifiers, key = parse(text)
+            except ShortcutError as exc:
+                problems[action] = str(exc)
+                continue
+            parsed.append((action, modifiers, key))
+        if not parsed or not supported():
+            return problems
+
         ready = threading.Event()
-        result = {"ok": False}
 
         def run() -> None:
             import ctypes
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            self._thread_id = kernel32.GetCurrentThreadId()
-            result["ok"] = bool(user32.RegisterHotKey(None, 1, self._modifiers | MOD_NOREPEAT, self._key))
+            self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+            ids: dict[int, str] = {}
+            for number, (action, modifiers, key) in enumerate(parsed, start=1):
+                if user32.RegisterHotKey(None, number, modifiers | MOD_NOREPEAT, key):
+                    ids[number] = action
+                else:
+                    problems[action] = "Already used by Windows or another app."
             ready.set()
-            if not result["ok"]:
-                return
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-                if msg.message == WM_HOTKEY:
-                    self._callback()
-            user32.UnregisterHotKey(None, 1)
+                if msg.message == WM_HOTKEY and msg.wParam in ids:
+                    self._callback(ids[msg.wParam])
+            for number in ids:
+                user32.UnregisterHotKey(None, number)
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
         ready.wait(2)
-        return result["ok"]
+        return problems
 
     def stop(self) -> None:
         if self._thread is None:
@@ -66,3 +144,24 @@ class GlobalHotkey:
         ctypes.windll.user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
         self._thread.join(2)
         self._thread = None
+
+
+def pressed_modifiers() -> int:
+    """Which of Ctrl/Alt/Shift/Win are held right now (Windows only)."""
+    import ctypes
+
+    state = ctypes.windll.user32.GetKeyState
+    held = lambda vk: state(vk) & 0x8000  # noqa: E731
+    modifiers = 0
+    if held(0x11):
+        modifiers |= MOD_CONTROL
+    if held(0x12):
+        modifiers |= MOD_ALT
+    if held(0x10):
+        modifiers |= MOD_SHIFT
+    if held(0x5B) or held(0x5C):
+        modifiers |= MOD_WIN
+    return modifiers
+
+
+MODIFIER_KEYS = {0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}

@@ -94,20 +94,70 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(startup._read(), startup.launch_command())
 
 
+class ShortcutParsingTest(unittest.TestCase):
+    def test_round_trip(self):
+        for text in ("Ctrl+Alt+L", "Ctrl+Alt+PageUp", "Shift+Win+F5", "Alt+Num7", "F13"):
+            self.assertEqual(hotkey.format_shortcut(*hotkey.parse(text)), text)
+
+    def test_case_and_spacing(self):
+        self.assertEqual(hotkey.parse(" ctrl + alt + l "), (hotkey.MOD_CONTROL | hotkey.MOD_ALT, ord("L")))
+
+    def test_rejects_plain_keys_and_unknowns(self):
+        for text in ("L", "Shift+L", "Ctrl+Alt+Enter", "Hyper+L", ""):
+            with self.assertRaises(hotkey.ShortcutError, msg=text):
+                hotkey.parse(text)
+
+    def test_defaults_are_valid_and_unique(self):
+        used = [s for s in config.DEFAULT_SHORTCUTS.values() if s]
+        self.assertEqual(len(used), len(set(used)))
+        for text in used:
+            hotkey.parse(text)
+
+
+class ShortcutConfigTest(unittest.TestCase):
+    def test_defaults_merge_with_saved(self):
+        path = Path(tempfile.mkdtemp()) / "config.json"
+        path.write_text('{"shortcuts": {"toggle": "Ctrl+Alt+T", "dimmer": "", "bogus": "Ctrl+Alt+B"}}')
+        shortcuts = config.load(path).shortcuts
+        self.assertEqual(shortcuts["toggle"], "Ctrl+Alt+T")
+        self.assertEqual(shortcuts["dimmer"], "")  # cleared on purpose stays cleared
+        self.assertEqual(shortcuts["brighter"], "Ctrl+Alt+PageUp")  # default filled in
+        self.assertNotIn("bogus", shortcuts)
+
+    def test_forget_bulb_keeps_shortcuts(self):
+        cfg = config.Config(ip="1.2.3.4", token="a" * 32)
+        cfg.shortcuts["on"] = "Ctrl+Alt+O"
+        self.assertEqual(config.forget_bulb(cfg).shortcuts["on"], "Ctrl+Alt+O")
+
+
 @unittest.skipUnless(sys.platform == "win32", "Windows only")
-class HotkeyTest(unittest.TestCase):
-    def test_register_and_conflict(self):
-        # An unusual combination so it won't clash with the user's own shortcuts.
-        combo = dict(modifiers=hotkey.MOD_CONTROL | hotkey.MOD_ALT | 0x0004, key=0x7B)  # Ctrl+Alt+Shift+F12
-        first = hotkey.GlobalHotkey(lambda: None, **combo)
-        self.assertTrue(first.start())
+class HotkeyManagerTest(unittest.TestCase):
+    # Unusual combinations so they won't clash with the user's own shortcuts.
+    A = "Ctrl+Alt+Shift+F11"
+    B = "Ctrl+Alt+Shift+F12"
+
+    def test_register_conflict_and_bad_entries(self):
+        first = hotkey.HotkeyManager(lambda action: None)
+        self.assertEqual(first.apply({"one": self.A, "two": self.B, "none": ""}), {})
         try:
-            self.assertFalse(hotkey.GlobalHotkey(lambda: None, **combo).start())
+            second = hotkey.HotkeyManager(lambda action: None)
+            problems = second.apply({"one": self.A, "bad": "Q"})
+            self.assertEqual(set(problems), {"one", "bad"})
+            second.stop()
         finally:
             first.stop()
-        again = hotkey.GlobalHotkey(lambda: None, **combo)
-        self.assertTrue(again.start())
+        again = hotkey.HotkeyManager(lambda action: None)
+        self.assertEqual(again.apply({"one": self.A}), {})
         again.stop()
+
+    def test_reapply_releases_old_shortcuts(self):
+        manager = hotkey.HotkeyManager(lambda action: None)
+        manager.apply({"one": self.A})
+        manager.apply({"one": self.B})
+        other = hotkey.HotkeyManager(lambda action: None)
+        self.assertEqual(other.apply({"x": self.A}), {})
+        other.stop()
+        manager.stop()
 
 
 if __name__ == "__main__":

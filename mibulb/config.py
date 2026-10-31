@@ -15,6 +15,23 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Keyboard shortcut actions: (id, label, default shortcut). "" means not set.
+# Only combinations unlikely to clash with typing are set by default: on many
+# layouts Ctrl+Alt+<letter or digit> types a character (AltGr), so most are
+# left for you to choose.
+SHORTCUT_ACTIONS = [
+    ("toggle", "Toggle light", "Ctrl+Alt+L"),
+    ("on", "Turn on", ""),
+    ("off", "Turn off", ""),
+    ("brighter", "Brighter (+10%)", "Ctrl+Alt+PageUp"),
+    ("dimmer", "Dimmer (-10%)", "Ctrl+Alt+PageDown"),
+    ("warm", "Warm white", ""),
+    ("neutral", "Neutral white", ""),
+    ("daylight", "Daylight", ""),
+    ("window", "Show Mi Bulb window", ""),
+]
+DEFAULT_SHORTCUTS = {action: default for action, _label, default in SHORTCUT_ACTIONS}
+
 
 def user_config_path() -> Path:
     base = os.environ.get("APPDATA")
@@ -40,8 +57,9 @@ class Config:
     did: str = ""  # device id, used to find the bulb again if its IP changes
     properties: dict[str, int] = field(default_factory=dict)
     # App preferences (start with Windows lives in the registry, see startup.py)
-    hotkey: bool = True
+    hotkey: bool = True  # keyboard shortcuts on/off
     check_updates: bool = True
+    shortcuts: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))
 
     @property
     def is_complete(self) -> bool:
@@ -61,6 +79,9 @@ def load(path: Path | None = None) -> Config:
         properties=data.get("properties", {}),
         hotkey=bool(data.get("hotkey", True)),
         check_updates=bool(data.get("check_updates", True)),
+        # Defaults first, so actions added in a later version get theirs.
+        shortcuts={**DEFAULT_SHORTCUTS, **{k: str(v) for k, v in data.get("shortcuts", {}).items()
+                                           if k in DEFAULT_SHORTCUTS}},
     )
 
 
@@ -74,10 +95,12 @@ def save(config: Config, path: Path | None = None) -> Path:
         data["properties"] = config.properties
     data["hotkey"] = config.hotkey
     data["check_updates"] = config.check_updates
+    data["shortcuts"] = config.shortcuts
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return path
 
 
 def forget_bulb(config: Config) -> Config:
     """Return a copy without the bulb's name, IP, token and device id, keeping app preferences."""
-    return Config(properties=config.properties, hotkey=config.hotkey, check_updates=config.check_updates)
+    return Config(properties=config.properties, hotkey=config.hotkey, check_updates=config.check_updates,
+                  shortcuts=dict(config.shortcuts))
