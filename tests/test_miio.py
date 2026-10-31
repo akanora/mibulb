@@ -21,6 +21,8 @@ class FakeBulb:
         self.yeelight = yeelight
         self.scenes = scenes  # whether set_scene is understood
         self.methods = []
+        self.flow = None  # colour flow expression while an effect plays
+        self.off_timer = None  # minutes on the bulb's own off-timer
         self.token = bytes.fromhex(TOKEN)
         self.props = {1: False, 2: 50, 3: 4000, 4: 0xFFFFFF, 5: 2}
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -80,6 +82,20 @@ class FakeBulb:
             if method in ("set_rgb", "set_ct_abx"):
                 p[5] = 1 if method == "set_rgb" else 2
             return ["ok"]
+        if method == "start_cf":
+            self.flow = params[2]
+            return ["ok"]
+        if method == "stop_cf":
+            self.flow = None
+            return ["ok"]
+        if method == "cron_add":
+            self.off_timer = params[1]
+            return ["ok"]
+        if method == "cron_del":
+            self.off_timer = None
+            return ["ok"]
+        if method == "cron_get":
+            return [{"type": 0, "delay": self.off_timer, "mix": 0}] if self.off_timer else []
         if method == "set_scene" and self.scenes:
             kind, value, bright = params
             p[1], p[2] = True, bright

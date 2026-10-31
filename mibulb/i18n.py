@@ -69,6 +69,45 @@ TURKISH = {
     "Movie": "Film",
     "Gaming": "Oyun",
     "Night light": "Gece lambası",
+    # Effects
+    "Effects": "Efektler",
+    "Music sync": "Müzik senkronu",
+    "Stop music sync": "Müzik senkronunu durdur",
+    "Music sync is on  ·  click to stop": "Müzik senkronu açık  ·  durdurmak için tıklayın",
+    "Music sync stopped.": "Müzik senkronu durduruldu.",
+    "Music sync on/off": "Müzik senkronu aç/kapat",
+    "Music sync needs the PyAudioWPatch package": "Müzik senkronu için PyAudioWPatch paketi gerekli",
+    "Screen to follow": "Takip edilecek ekran",
+    "Export settings…": "Ayarları dışa aktar…",
+    "Import settings…": "Ayarları içe aktar…",
+    "Export settings": "Ayarları dışa aktar",
+    "Import settings": "Ayarları içe aktar",
+    "The exported file includes your bulbs' tokens in readable form, so it works on another PC. "
+    "Keep it somewhere private.":
+        "Dışa aktarılan dosya, başka bir bilgisayarda da çalışması için ampullerinizin anahtarlarını okunabilir "
+        "biçimde içerir. Onu güvenli bir yerde saklayın.",
+    "Settings imported.": "Ayarlar içe aktarıldı.",
+    "Local API (Stream Deck, scripts, Home Assistant)": "Yerel API (Stream Deck, betikler, Home Assistant)",
+    "Let other apps control Mi Bulb through a web address with a key":
+        "Diğer uygulamaların Mi Bulb'u anahtarlı bir web adresiyle kontrol etmesine izin ver",
+    "Also from other devices on my network (Windows may ask about the firewall)":
+        "Ağımdaki diğer cihazlardan da (Windows güvenlik duvarını sorabilir)",
+    "Copy": "Kopyala",
+    "New key": "Yeni anahtar",
+    "Replace toggle with on, off, status, brightness?value=40, scene?name=Relax and more (see the README). "
+    "Keep the key private.":
+        "toggle yerine on, off, status, brightness?value=40, scene?name=Relax ve daha fazlasını kullanın "
+        "(README'ye bakın). Anahtarı gizli tutun.",
+    "Effects ▾": "Efektler ▾",
+    "Stop effect": "Efekti durdur",
+    "Candle": "Mum ışığı",
+    "Breathing": "Nefes",
+    "Rainbow": "Gökkuşağı",
+    "Party": "Parti",
+    "Romance": "Romantik",
+    "Ocean": "Okyanus",
+    "Police": "Polis",
+    "Alarm": "Alarm",
     # Timer menu and tray
     "Schedules…": "Zamanlamalar…",
     "Cancel timer": "Zamanlayıcıyı iptal et",
@@ -211,6 +250,21 @@ TURKISH = {
     "Never": "Hiçbir zaman",
     "Pick at least one day.": "En az bir gün seçin.",
     "Time must be between 00:00 and 23:59": "Saat 00:00 ile 23:59 arasında olmalı",
+    "Evening warmth": "Akşam sıcaklığı",
+    "Make white light warmer in the evening": "Akşamları beyaz ışığı daha sıcak yap",
+    "From": "Başlangıç",
+    "to": "bitiş",
+    "ending at": "en sıcak",
+    "Sunset": "Gün batımı",
+    "Your location (for sunset)": "Konumunuz (gün batımı için)",
+    "Latitude and longitude, e.g. 41.01, 28.98 for Istanbul. Only used to work out sunset, on this PC. "
+    "Without it, Sunset means 20:00.":
+        "Enlem ve boylam, ör. İstanbul için 41.01, 28.98. Yalnızca gün batımını hesaplamak için bu bilgisayarda "
+        "kullanılır. Girilmezse Gün batımı 20:00 demektir.",
+    "No sunset today at this location.": "Bu konumda bugün gün batımı yok.",
+    "Which light": "Hangi ışık",
+    "The lights picked in the window": "Pencerede seçili ışıklar",
+    "Removed bulb": "Kaldırılmış ampul",
     "Mon": "Pzt",
     "Tue": "Sal",
     "Wed": "Çar",
@@ -244,6 +298,18 @@ TURKISH_TEMPLATES = {
     "Found {name} at its new address {ip}.": "{name} yeni adresinde bulundu: {ip}.",
     "Sunrise wake-up ({minutes} min)": "Gün doğumu uyandırma ({minutes} dk)",
     "Scene: {name}": "Sahne: {name}",
+    "Sunset today: {time}": "Bugün gün batımı: {time}",
+    "{time}   {days}   →   {action}   ({target})": "{time}   {days}   →   {action}   ({target})",
+    "Effect: {name}": "Efekt: {name}",
+    "Main screen ({size})": "Ana ekran ({size})",
+    "Saved to {path}": "Kaydedildi: {path}",
+    "The local API couldn't start on port {port}: {error}": "Yerel API {port} portunda başlatılamadı: {error}",
+    "Replace your current settings with the ones in {file}? It has {count} bulb(s) and {scenes} scene(s).":
+        "Mevcut ayarlarınız {file} içindekilerle değiştirilsin mi? Dosyada {count} ampul ve {scenes} sahne var.",
+    "Screen {number} ({size})": "Ekran {number} ({size})",
+    "Couldn't listen to the PC's sound: {error}": "Bilgisayarın sesi dinlenemedi: {error}",
+    "Effect: {name}  ·  click to stop": "Efekt: {name}  ·  durdurmak için tıklayın",
+    "This bulb doesn't support {feature}": "Bu ampul şunu desteklemiyor: {feature}",
     "Remove {name} from Mi Bulb?": "{name} Mi Bulb'dan kaldırılsın mı?",
     "Settings and your bulb's token are stored in\n{folder}": "Ayarlar ve ampulünüzün anahtarı şurada saklanır:\n{folder}",
     "Could not change the setting: {error}": "Ayar değiştirilemedi: {error}",
@@ -282,6 +348,7 @@ TURKISH_TEMPLATES = {
     "Could not finish signing in: {error}": "Giriş tamamlanamadı: {error}",
     "Could not read devices: {error}": "Cihazlar okunamadı: {error}",
     "Download failed: {error}": "İndirme başarısız: {error}",
+    "On your keyboard this also types {char}": "Klavyenizde bu kısayol {char} karakterini de yazar",
 }
 
 _TABLES = {"tr": (TURKISH, TURKISH_TEMPLATES)}
@@ -363,8 +430,14 @@ def install_tk() -> None:
         return
     import tkinter
 
-    original_options = tkinter.Misc._options
-    original_title = tkinter.Wm.wm_title
+    # These are Tkinter internals. If a future Python changes them, show English
+    # rather than fail to start.
+    original_options = getattr(tkinter.Misc, "_options", None)
+    original_title = getattr(tkinter.Wm, "wm_title", None)
+    if not callable(original_options) or not callable(original_title) or not hasattr(tkinter, "_cnfmerge"):
+        _installed = True
+        set_language("en")
+        return
 
     def _options(self, cnf, kw=None):
         merged = tkinter._cnfmerge((cnf, kw)) if kw else tkinter._cnfmerge(cnf)

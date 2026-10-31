@@ -159,8 +159,6 @@ class ScenesTest(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "win32", "Windows only")
 class StartupTest(unittest.TestCase):
     def setUp(self):
-        import winreg
-
         # Use a throwaway key so the real "start with Windows" setting is untouched.
         self.key = r"Software\mibulb-test-run"
         self.shortcut = Path(tempfile.mkdtemp()) / "Mi Bulb.lnk"
@@ -221,6 +219,17 @@ class ShortcutParsingTest(unittest.TestCase):
         self.assertEqual(len(used), len(set(used)))
         for text in used:
             hotkey.parse(text)
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows only")
+class AltGrTest(unittest.TestCase):
+    def test_only_ctrl_alt_combinations_are_checked(self):
+        self.assertIsNone(hotkey.typed_character(*hotkey.parse("Win+Shift+F5")))
+        self.assertIsNone(hotkey.typed_character(*hotkey.parse("Ctrl+Alt+PageUp")))
+
+    def test_us_layout_types_nothing(self):
+        us = 0x04090409
+        self.assertIsNone(hotkey.typed_character(*hotkey.parse("Ctrl+Alt+L"), layout=us))
 
 
 class ShortcutConfigTest(unittest.TestCase):

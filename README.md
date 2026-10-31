@@ -9,13 +9,18 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 - Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
 - Several bulbs: control one, or all of them at once
-- Screen sync: the light follows the main colour on your screen, great for games and films
+- Screen sync: the light follows the main colour on your screen (pick which screen), great for games and films
+- Music sync: the light pulses and changes colour with whatever your PC plays
+- Effects the bulb plays by itself: Candle, Breathing, Rainbow, Party and more
+- Pick a colour from anywhere on your screen
 - Scenes: one-click favourites like Reading, Relax, Movie and Gaming. Save your own and give them shortcuts.
-- Sleep timer that fades out, sunrise wake-up, and schedules (on/off/scene at set times)
+- Sleep timer that fades out (and also sets the bulb's own timer), sunrise wake-up, and schedules for one or all lights
+- Evening warmth: white light gets warmer from sunset (or a time you choose) towards bedtime
 - Follows your PC: off when you lock it or it sleeps, back on when you return
 - Updates itself: new versions are downloaded, checked and installed automatically
 - In English or Turkish (Türkçe): follows your Windows language, or pick one in settings
-- Control it from the command line, for scripts, shortcuts or Task Scheduler
+- Control it from the command line, or from a Stream Deck, script or Home Assistant through an optional local API
+- Export your settings to move them to another PC
 - Scan the network to find the bulb's IP
 
 Tested target: model `MJDPL01YL` / `yeelink.light.color5`. Other MIoT lights may work if you override the property ids (see [Other bulbs](#other-bulbs)).
@@ -94,6 +99,18 @@ Click **Screen sync** in the Colour panel (or in the tray menu, or give it a sho
 - Windowed and borderless games work. Exclusive fullscreen games may not be captured, and then the light keeps its last colour.
 - Changing the light yourself, or locking the PC, stops it.
 
+## Music sync
+
+Pick **Music sync** in the Effects ▾ menu (or the tray menu, or give it a shortcut). Mi Bulb listens to the sound going to your speakers or headphones. That's Windows "loopback", so no microphone is used and nothing is recorded or saved. Loudness sets the brightness, and each beat moves the colour along the rainbow. Silence leaves the light as it is.
+
+## Effects
+
+**Effects ▾** in the Colour panel (or the tray menu) has Candle, Breathing, Rainbow, Party, Romance, Ocean, Police and Alarm. The bulb plays them by itself, so they're perfectly smooth and keep going with no traffic from the PC. Click **Stop effect**, change the light yourself, or give each effect a shortcut to switch it on and off. Effects need the Yeelight command set, which Mi Smart LED Bulb Essential has.
+
+## Pick a colour from the screen
+
+Click **⌖** in the Colour panel. Mi Bulb hides, shows a still image of your screens, and you click any pixel to set the light to that colour. Esc or right-click cancels. It works across several screens and with Windows display scaling.
+
 ## Tray quick panel
 
 Left-click the tray icon to open a small panel above the taskbar, like the Windows volume pop-up. It has power, brightness and white sliders, colour swatches, your first six scenes and a 30-minute sleep timer. Click anywhere else or press Esc to close it. If you'd rather left-click just toggle the light, change that in Settings → App → Tray icon.
@@ -112,9 +129,11 @@ The **Scenes** panel in the window has one-click favourites. It starts with Read
 - **Sleep timer** (⏾ in the window, or the tray menu): slowly dims the light over 15–90 minutes, then turns it off. You can also give it a keyboard shortcut.
 - **Sunrise wake-up:** starts as a faint deep-orange glow and brightens to full neutral white over 10, 15 or 30 minutes. Start one now from ⏾, or schedule it.
 - **Schedules** (Settings → Automation): run Turn on, Turn off, a scene or a sunrise at a time of day, on the days you choose.
+- **Schedules for one light:** with several bulbs, each schedule can control the lights picked in the window, all lights, or one bulb ("Bedroom at 7:00").
+- **Evening warmth** (Settings → Automation): from sunset (or a time you choose) until bedtime, white light fades from neutral to a warm 2200–3000 K and stays warm through the night. For "Sunset", enter your latitude and longitude; sunset is calculated on your PC. It only changes lights that are on and white. If you pick a white yourself, it leaves you alone until the next evening.
 - **Follow the PC** (Settings → Automation): turn the light off when you lock the PC or it goes to sleep, and back on when you return. It only turns the light back on if Mi Bulb was the one that turned it off.
 
-Changing the light yourself (a slider, a scene, a shortcut) stops a running timer or sunrise. Timers and schedules run inside Mi Bulb, so it needs to be running, which it can do quietly in the tray.
+The sleep timer also sets the bulb's own off-timer, so the light still goes off if your PC sleeps or shuts down first. Changing the light yourself (a slider, a scene, a shortcut) stops a running timer, sunrise, effect or sync. Timers and schedules run inside Mi Bulb, so it needs to be running, which it can do quietly in the tray.
 
 ## Updates
 
@@ -149,6 +168,8 @@ To add a language, add a table of translations to `mibulb/i18n.py`. The app's te
 
 ### Keyboard shortcuts
 
+*(Effects, scenes, music sync and the sleep timer can have shortcuts too.)*
+
 The **Shortcuts** tab lists every action. Click a shortcut and press the keys you want. Esc cancels, and Backspace clears it. Shortcuts work in any app, including games, and you can turn them all off with one checkbox.
 
 | Action | Default |
@@ -160,7 +181,32 @@ The **Shortcuts** tab lists every action. Click a shortcut and press the keys yo
 
 A shortcut needs Ctrl, Alt or Win, so normal typing isn't blocked. F13–F24 also work on their own. If Windows or another app already uses a combination, the tab says so next to it.
 
-On some keyboard layouts (for example Turkish, German or Polish), Ctrl+Alt+<key> is the same as AltGr+<key> and types a special character. That's why only a few defaults are set. If a character stops working, give that action a different shortcut.
+On many keyboard layouts Ctrl+Alt+<key> is the same as AltGr+<key> and types a character: for example Ctrl+Alt+Q types @ on Turkish and German keyboards, and Ctrl+Alt+L types ł on Polish ones. That's why only a few defaults are set. The Shortcuts tab checks your keyboard layout and warns next to any shortcut that would block a character, for example "On your keyboard this also types ł".
+
+## Local API (Stream Deck, scripts, Home Assistant)
+
+Turn it on in Settings → App → **Local API**. Mi Bulb then answers web requests on port 8765, and shows an address with your key to copy:
+
+```text
+http://127.0.0.1:8765/api/toggle?key=YOUR-KEY
+```
+
+| Request | Does |
+| --- | --- |
+| `/api/status` | what the light is doing, plus your scenes, effects and lights (JSON) |
+| `/api/on`, `/api/off`, `/api/toggle` | power |
+| `/api/brightness?value=40` | brightness 1–100, or `value=up` / `value=down` |
+| `/api/white?kelvin=2700` | white temperature |
+| `/api/color?hex=ff8800` | colour |
+| `/api/scene?name=Relax` | a scene |
+| `/api/effect?name=candle` | an effect (`name=stop` stops it) |
+| `/api/sleep?minutes=30` | sleep timer (`minutes=0` cancels) |
+| `/api/screen-sync`, `/api/music-sync` | switch syncing on or off |
+| `/api/light?name=Bed` | control one bulb, or `name=all` |
+
+- **Requests:** GET or POST. The key can also go in an `X-API-Key` header.
+- **Stream Deck:** use a "Website" or "API request" action with the address. Home Assistant can use a `rest_command`.
+- **Security:** every request needs the key, so other programs, or a web page open in your browser, can't use it without it. **New key** replaces it. By default only this PC can connect. Tick "Also from other devices on my network" for Home Assistant or a phone; Windows may then ask whether to allow Mi Bulb through the firewall.
 
 ## Command line
 
@@ -178,6 +224,14 @@ python -m mibulb --bulb all off
 ```
 
 `--bulb NAME` picks a bulb by name (or `--bulb all`). `--ip` and `--token` control a bulb that isn't in your settings.
+
+## Your data
+
+Settings are in `%APPDATA%\mibulb\config.json`:
+
+- **Encrypted tokens:** bulb tokens and the API key are encrypted with Windows DPAPI, so only your Windows account can read them. Copying the file to another PC or account doesn't reveal them.
+- **Safe saving:** settings go to a temporary file first and then replace the old one, so a crash or power cut can't leave a half-written file. The previous version is kept as `config.json.bak`. If the file is ever damaged anyway, Mi Bulb starts from that backup, keeps the damaged copy as `config.broken-….json`, and tells you.
+- **Moving PCs:** Settings → App → **Export settings…** writes a file you can **Import** on another PC. It contains the tokens in readable form, so keep it private.
 
 ## Configuration
 
@@ -205,6 +259,10 @@ The default property ids come from the [MIoT spec for yeelink.light.color5](http
 | `Checksum mismatch` | The token is wrong or out of date. Extract it again. |
 | Sign-in finds no devices | Make sure you scanned with the account that owns the bulb in Xiaomi Home. Shared devices only show up if they're shared through a home. |
 | `discover` finds nothing | Some routers block broadcast between Wi-Fi and wired clients. Enter the IP manually. |
+
+## Publishing
+
+[docs/PUBLISHING.md](docs/PUBLISHING.md) covers releasing, listing on winget (`winget install akanora.MiBulb`) and free code signing for open-source projects, which removes the SmartScreen warning.
 
 ## Development
 
@@ -234,9 +292,18 @@ The exe isn't code-signed with a paid certificate, so Windows SmartScreen may wa
 
 ## How it works
 
-- `mibulb/miio.py` is a small implementation of the miIO LAN protocol. Commands go out as AES-128-CBC encrypted JSON over UDP port 54321, with a key derived from the token.
-- `mibulb/bulb.py` maps on/brightness/colour onto bulb commands. It detects whether the bulb speaks the older Yeelight command set (`get_prop`, `set_power`, `set_bright`, …), which the Essential bulb uses on firmware 2.0.x, or MIoT `get_properties` / `set_properties`.
-- `mibulb/cloud.py` handles the one-time Xiaomi QR sign-in and reads your device list (IP + token) from Xiaomi's API. It follows the same method as Xiaomi Cloud Tokens Extractor, rewritten from scratch.
+The app is in `mibulb/`:
+
+| Part | What it does |
+| --- | --- |
+| `miio.py` | the miIO LAN protocol: AES-encrypted JSON over UDP port 54321. The "hello" handshake is reused for a minute, which halves round trips (27 → 19 ms per command on a real bulb). |
+| `bulb.py` | bulb commands for both command sets (Yeelight and MIoT), and `BulbGroup`, which sends to several bulbs at once. An offline bulb is skipped for a while (30 s, up to 5 min) instead of holding up the others. |
+| `cloud.py` | the one-time Xiaomi QR sign-in that reads your bulbs' IPs and tokens |
+| `config.py`, `secret.py` | settings, safe saving, DPAPI-encrypted tokens |
+| `automation.py`, `effects.py` | schedules, fades, sunset and evening warmth; the effect list |
+| `screensync.py`, `musicsync.py` | following the screen and the PC's sound |
+| `api.py`, `hotkey.py`, `pcevents.py`, `startup.py`, `updates.py`, `i18n.py` | local API, shortcuts, lock/sleep, start with Windows, self-update, translations |
+| `gui/` | the windows: `app.py` (main window and tray), `settings.py`, `quickpanel.py`, `dialogs.py`, `picker.py` |
 
 ## License
 

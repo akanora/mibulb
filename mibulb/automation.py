@@ -7,9 +7,10 @@ Fades are planned here as a list of steps; the app sends them over time.
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 
 from .i18n import t
 
@@ -36,6 +37,7 @@ class Schedule:
     days: list[int] = field(default_factory=lambda: list(EVERY_DAY))  # 0 = Monday
     action: str = "on"
     enabled: bool = True
+    target: str = ""  # "" = the lights picked in the window, "all", or a bulb id
 
     def due(self, now: datetime) -> bool:
         return self.enabled and now.weekday() in self.days and now.strftime("%H:%M") == self.time
@@ -51,6 +53,7 @@ class Schedule:
             days=sorted({int(d) for d in data.get("days", EVERY_DAY) if 0 <= int(d) <= 6}),
             action=str(data.get("action", "on")),
             enabled=bool(data.get("enabled", True)),
+            target=str(data.get("target", "")),
         )
 
 
@@ -123,3 +126,67 @@ def plan_sleep_timer(minutes: float, brightness: int) -> list[Step]:
 
 def plan_sunrise(minutes: float) -> list[Step]:
     return plan_fade(minutes, SUNRISE_START, SUNRISE_END)
+
+
+# ---- evening warmth --------------------------------------------------------------
+
+DAY_KELVIN = 5000  # where the evening fade starts
+WARMTH_KELVIN_CHOICES = [2200, 2700, 3000]
+
+
+def sunset(latitude: float, longitude: float, day: date) -> datetime | None:
+    """Local sunset time (NOAA's approximation, within a minute or two). None during polar day/night."""
+    n = day.timetuple().tm_yday
+    gamma = 2 * math.pi / 365 * (n - 1)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
+                       - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma))
+    decl = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma) - 0.006758 * math.cos(2 * gamma)
+            + 0.000907 * math.sin(2 * gamma) - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
+    lat = math.radians(latitude)
+    cos_ha = (math.cos(math.radians(90.833)) / (math.cos(lat) * math.cos(decl))) - math.tan(lat) * math.tan(decl)
+    if not -1 <= cos_ha <= 1:
+        return None
+    ha = math.degrees(math.acos(cos_ha))
+    minutes_utc = 720 - 4 * (longitude - ha) - eqtime
+    utc_midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return (utc_midnight + timedelta(minutes=minutes_utc)).astimezone().replace(tzinfo=None)
+
+
+def parse_location(text: str) -> tuple[float, float] | None:
+    """'41.01, 28.98' -> (41.01, 28.98); empty or invalid -> None."""
+    try:
+        lat_text, lon_text = text.replace(";", ",").split(",")
+        lat, lon = float(lat_text), float(lon_text)
+    except ValueError:
+        return None
+    return (lat, lon) if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def warmth_start(start: str, location: tuple[float, float] | None, day: date) -> datetime:
+    if start == "sunset" and location is not None:
+        found = sunset(location[0], location[1], day)
+        if found is not None:
+            return found
+    clock = normalise_time(start if start != "sunset" else "20:00")
+    return datetime.combine(day, datetime.strptime(clock, "%H:%M").time())
+
+
+def warmth_kelvin(now: datetime, start: str, end: str, warm: int,
+                  location: tuple[float, float] | None = None) -> int | None:
+    """The white temperature evening warmth wants right now, or None during the day.
+
+    From the start time to the end time it fades from DAY_KELVIN down to warm,
+    then stays warm until 5:00 the next morning.
+    """
+    day = now.date() if now.hour >= 5 else (now - timedelta(days=1)).date()
+    begin = warmth_start(start, location, day)
+    finish = datetime.combine(day, datetime.strptime(normalise_time(end), "%H:%M").time())
+    if finish <= begin:
+        finish += timedelta(days=1) if finish.hour < 5 else timedelta(0)
+        finish = max(finish, begin + timedelta(minutes=1))
+    if now < begin:
+        return None
+    if now >= finish:
+        return warm
+    progress = (now - begin) / (finish - begin)
+    return round(DAY_KELVIN + (warm - DAY_KELVIN) * progress)

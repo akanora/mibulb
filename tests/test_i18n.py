@@ -50,6 +50,14 @@ class TranslateTest(unittest.TestCase):
         self.assertIn(i18n.resolve("auto"), i18n.LANGUAGES)
 
 
+class TkInternalsTest(unittest.TestCase):
+    def test_hooks_exist_on_this_python(self):
+        # If this fails on a new Python, install_tk() falls back to English; update the hooks.
+        self.assertTrue(callable(getattr(tk.Misc, "_options", None)))
+        self.assertTrue(callable(getattr(tk.Wm, "wm_title", None)))
+        self.assertTrue(hasattr(tk, "_cnfmerge"))
+
+
 class TkTest(unittest.TestCase):
     def test_widgets_are_translated(self):
         i18n.install_tk()

@@ -61,10 +61,47 @@ def color_distance(a: int, b: int) -> float:
     return ((ar - br) ** 2 + (ag - bg) ** 2 + (ab - bb) ** 2) ** 0.5
 
 
-def grab_screen():
+def grab_screen(bbox: tuple[int, int, int, int] | None = None):
+    """The main screen, or the part of the desktop in bbox (left, top, right, bottom)."""
     from PIL import ImageGrab
 
-    return ImageGrab.grab()  # the main screen
+    if bbox is None:
+        return ImageGrab.grab()
+    return ImageGrab.grab(bbox=bbox, all_screens=True)
+
+
+def monitors() -> list[dict]:
+    """The PC's screens, main screen first: [{"name", "bbox", "primary"}]. Windows only."""
+    import sys
+
+    if sys.platform != "win32":
+        return [{"name": "Main screen", "bbox": None, "primary": True}]
+    import ctypes
+    from ctypes import wintypes
+
+    class MONITORINFOEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD), ("szDevice", wintypes.WCHAR * 32)]
+
+    found: list[dict] = []
+    MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                         ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def callback(hmonitor, _hdc, _rect, _data):
+        info = MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        ctypes.windll.user32.GetMonitorInfoW(hmonitor, ctypes.byref(info))
+        r = info.rcMonitor
+        found.append({"bbox": (r.left, r.top, r.right, r.bottom), "primary": bool(info.dwFlags & 1),
+                      "size": f"{r.right - r.left}×{r.bottom - r.top}"})
+        return True
+
+    ctypes.windll.user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(callback), 0)
+    found.sort(key=lambda m: (not m["primary"], m["bbox"][0], m["bbox"][1]))
+    for number, monitor in enumerate(found, 1):
+        monitor["name"] = (f"Main screen ({monitor['size']})" if monitor["primary"]
+                           else f"Screen {number} ({monitor['size']})")
+    return found or [{"name": "Main screen", "bbox": None, "primary": True}]
 
 
 class ScreenSync:

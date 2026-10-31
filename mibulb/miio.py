@@ -33,6 +33,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 PORT = 54321
 MAGIC = 0x2131
 HEADER_SIZE = 32
+# How long a device id and clock from a "hello" are reused before asking again
+HANDSHAKE_REUSE_SECONDS = 60.0
 HELLO = bytes.fromhex("21310020" + "ff" * 28)
 
 
@@ -143,26 +145,33 @@ class Device:
 
     def __init__(self, ip: str, token: str, timeout: float = 3.0, retries: int = 2):
         self.ip = ip
+        self.port = PORT
         self.token = parse_token(token)
         self.timeout = timeout
         self.retries = retries
         self.device_id = 0
         self._stamp = 0
         self._stamp_at = 0.0
+        self._handshake_for: tuple[str, int] | None = None  # (ip, port) the cached handshake belongs to
         self._next_id = random.randint(1, 9000)
 
     def _handshake(self, sock: socket.socket) -> None:
-        sock.sendto(HELLO, (self.ip, PORT))
+        sock.sendto(HELLO, (self.ip, self.port))
         data, _ = sock.recvfrom(1024)
         header = parse_header(data)
         self.device_id = header.device_id
         self._stamp = header.stamp
         self._stamp_at = time.monotonic()
+        self._handshake_for = (self.ip, self.port)
+
+    def _handshake_fresh(self) -> bool:
+        return (self._handshake_for == (self.ip, self.port)
+                and time.monotonic() - self._stamp_at < HANDSHAKE_REUSE_SECONDS)
 
     def send(self, method: str, params: Any = None) -> Any:
         """Send a command and return its "result" field."""
         last_error: Exception | None = None
-        for _attempt in range(self.retries + 1):
+        for attempt in range(self.retries + 1):
             self._next_id += 1
             request_id = self._next_id
             payload = json.dumps(
@@ -172,15 +181,19 @@ class Device:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     sock.settimeout(self.timeout)
-                    self._handshake(sock)
+                    # The device id and clock from the last "hello" stay valid for a while, which
+                    # halves the round trips. A retry always starts with a fresh hello.
+                    if attempt > 0 or not self._handshake_fresh():
+                        self._handshake(sock)
                     stamp = self._stamp + int(time.monotonic() - self._stamp_at) + 1
-                    sock.sendto(build_packet(self.token, self.device_id, stamp, payload), (self.ip, PORT))
+                    sock.sendto(build_packet(self.token, self.device_id, stamp, payload), (self.ip, self.port))
                     while True:
                         data, _ = sock.recvfrom(4096)
                         reply = parse_packet(self.token, data)
                         if reply.get("id") == request_id:
                             break
             except (socket.timeout, ConnectionResetError, ConnectionRefusedError) as exc:
+                self._handshake_for = None
                 # Windows reports "connection reset" when nothing listens at that address, e.g. the
                 # router gave the bulb's old IP to another device. Treat it like no answer.
                 last_error = DeviceUnreachable(f"No response from {self.ip} (is it on and on the same network?)")

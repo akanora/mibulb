@@ -146,6 +146,40 @@ class HotkeyManager:
         self._thread = None
 
 
+def typed_character(modifiers: int, key: int, layout: int | None = None) -> str | None:
+    """The character this combination types on the current keyboard layout, if any.
+
+    On many layouts Ctrl+Alt works as AltGr (Ctrl+Alt+L types "ł" on Polish
+    keyboards), so a global shortcut on it would stop that character from
+    being typed.
+    """
+    if not supported() or not (modifiers & MOD_CONTROL and modifiers & MOD_ALT) or modifiers & MOD_WIN:
+        return None
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.GetKeyboardLayout.restype = ctypes.c_void_p
+    user32.ToUnicodeEx.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_char_p, ctypes.c_wchar_p, ctypes.c_int,
+                                   ctypes.c_uint, ctypes.c_void_p]
+    hkl = layout if layout is not None else user32.GetKeyboardLayout(0)
+    state = (ctypes.c_ubyte * 256)()
+    for vk in (0x11, 0x12, 0xA2, 0xA4):  # Ctrl, Alt, left Ctrl, left Alt held
+        state[vk] = 0x80
+    if modifiers & MOD_SHIFT:
+        state[0x10] = state[0xA0] = 0x80
+    buffer = ctypes.create_unicode_buffer(8)
+    scan = user32.MapVirtualKeyExW(key, 0, ctypes.c_void_p(hkl))
+    # Flag 4: don't change the keyboard state (Windows 10 1607 and later)
+    count = user32.ToUnicodeEx(key, scan, ctypes.cast(state, ctypes.c_char_p), buffer, len(buffer), 4, hkl)
+    if count < 0:
+        # A dead key (e.g. an accent waiting for the next letter): clear it and still report it.
+        user32.ToUnicodeEx(0x20, 0x39, ctypes.cast((ctypes.c_ubyte * 256)(), ctypes.c_char_p), buffer,
+                           len(buffer), 4, hkl)
+        return "´"
+    text = buffer.value[:count] if count > 0 else ""
+    return text if text and text.isprintable() else None
+
+
 def pressed_modifiers() -> int:
     """Which of Ctrl/Alt/Shift/Win are held right now (Windows only)."""
     import ctypes

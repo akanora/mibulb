@@ -45,6 +45,8 @@ def _bulb(args: argparse.Namespace) -> Bulb | BulbGroup:
             raise SystemExit("Pass both --ip and --token.")
         return Bulb(args.ip, args.token)
     cfg = config_mod.load()
+    for problem in config_mod.load_problems:
+        print(f"warning: {problem}", file=sys.stderr)
     if args.bulb:
         wanted = args.bulb.lower()
         if wanted == config_mod.ALL:
@@ -56,7 +58,7 @@ def _bulb(args: argparse.Namespace) -> Bulb | BulbGroup:
                 raise SystemExit(f"No bulb called {args.bulb!r}. Your bulbs: {names}")
             cfg.selected = match[0].id
     if not cfg.is_complete:
-        raise SystemExit(f"No bulb configured. Run 'mibulb login', or pass --ip and --token.")
+        raise SystemExit("No bulb configured. Run 'mibulb login', or pass --ip and --token.")
     return BulbGroup(cfg.current_bulbs)
 
 

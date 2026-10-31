@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from mibulb import automation, config
@@ -43,6 +43,39 @@ class ScheduleTest(unittest.TestCase):
         loaded = config.load(path)
         self.assertEqual(loaded.schedules[0].to_dict(), cfg.schedules[0].to_dict())
         self.assertTrue(loaded.lock_off and loaded.unlock_on)
+
+
+class WarmthTest(unittest.TestCase):
+    def test_sunset_known_places(self):
+        # Times are in this PC's time zone, so compare the UTC difference between two places instead.
+        istanbul = automation.sunset(41.01, 28.98, date(2026, 6, 21))
+        london = automation.sunset(51.51, -0.13, date(2026, 6, 21))
+        gap = (london - istanbul).total_seconds() / 3600
+        self.assertAlmostEqual(gap, 2.7, delta=0.1)  # 20:39 +03 vs 21:21 +01 → 17:39 vs 20:21 UTC
+        self.assertIsNone(automation.sunset(69.65, 18.96, date(2026, 6, 21)))  # midnight sun
+
+    def test_location_parsing(self):
+        self.assertEqual(automation.parse_location("41.01, 28.98"), (41.01, 28.98))
+        self.assertIsNone(automation.parse_location(""))
+        self.assertIsNone(automation.parse_location("100, 0"))
+
+    def test_fade_through_the_evening(self):
+        k = lambda h, m: automation.warmth_kelvin(datetime(2026, 11, 2, h, m), "20:00", "22:00", 2700)  # noqa: E731
+        self.assertIsNone(k(19, 59))
+        self.assertEqual(k(20, 0), automation.DAY_KELVIN)
+        self.assertEqual(k(21, 0), (automation.DAY_KELVIN + 2700) // 2)
+        self.assertEqual(k(22, 30), 2700)
+        self.assertEqual(k(3, 0), 2700)  # still night
+        self.assertIsNone(k(6, 0))  # morning: leave it alone
+
+    def test_end_after_midnight(self):
+        k = lambda h, m: automation.warmth_kelvin(datetime(2026, 11, 2, h, m), "22:00", "00:00", 2200)  # noqa: E731
+        self.assertEqual(k(23, 0), round((automation.DAY_KELVIN + 2200) / 2))
+        self.assertEqual(k(0, 30), 2200)
+
+    def test_schedule_target_round_trip(self):
+        schedule = automation.Schedule.from_dict({"time": "7:00", "action": "on", "target": "b1"})
+        self.assertEqual(automation.Schedule.from_dict(schedule.to_dict()).target, "b1")
 
 
 class FadeTest(unittest.TestCase):

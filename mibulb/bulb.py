@@ -13,6 +13,8 @@ By default the bulb is probed once to see which one it speaks.
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -194,6 +196,44 @@ class Bulb:
             self._miot_set(color=rgb)
 
 
+    # ---- features the bulb runs by itself (Yeelight command set only) ------
+
+    def _require_yeelight(self, feature: str) -> None:
+        if self._detect() != "yeelight":
+            raise MiIOError(f"This bulb doesn't support {feature}")
+
+    def start_effect(self, expression: str, count: int = 0, action: int = 1) -> None:
+        """Play a colour flow on the bulb. count 0 repeats forever; action is what happens when it ends."""
+        self._require_yeelight("effects")
+        if self.device.send("set_power", ["on", "smooth", 300]) != ["ok"]:
+            raise MiIOError("Bulb rejected set_power")
+        result = self.device.send("start_cf", [count, action, expression])
+        if result != ["ok"]:
+            raise MiIOError(f"Bulb rejected the effect: {result}")
+
+    def stop_effect(self) -> None:
+        self._require_yeelight("effects")
+        self.device.send("stop_cf", [])
+
+    def set_off_timer(self, minutes: int) -> None:
+        """The bulb turns itself off after this many minutes, even if the PC is off."""
+        self._require_yeelight("a built-in timer")
+        result = self.device.send("cron_add", [0, max(1, int(minutes))])
+        if result != ["ok"]:
+            raise MiIOError(f"Bulb rejected the timer: {result}")
+
+    def cancel_off_timer(self) -> None:
+        self._require_yeelight("a built-in timer")
+        self.device.send("cron_del", [0])
+
+    def off_timer_minutes(self) -> int | None:
+        """Minutes left on the bulb's own timer, or None if none is set."""
+        self._require_yeelight("a built-in timer")
+        for entry in self.device.send("cron_get", [0]) or []:
+            if isinstance(entry, dict) and entry.get("type") == 0:
+                return int(entry.get("delay", 0))
+        return None
+
     def sync_color(self, rgb: int, brightness: int | None, fade_ms: int) -> None:
         """A quick colour (and optional brightness) change for screen sync. The light must be on."""
         rgb = max(1, min(0xFFFFFF, int(rgb)))
@@ -247,18 +287,54 @@ class Bulb:
             self._miot_set(**values)
 
 
+# How long a group command waits for its bulbs before letting slow ones finish in the background
+SLOW_SECONDS = 1.0
+
+
 class BulbGroup:
     """Sends each command to one or more bulbs, with the same methods as Bulb.
 
-    If a bulb stops answering and has a device id, it is looked for on the
-    network in case the router gave it a new IP; on_moved(member) is then
+    Bulbs are sent to at the same time, so a slow one doesn't hold up the
+    rest. If a bulb stops answering and has a device id, it is looked for on
+    the network in case the router gave it a new IP; on_moved(member) is then
     called so the new IP can be saved.
+
+    In a group, a bulb that still doesn't answer is skipped for a while
+    (30 s, doubling up to 5 min while it stays offline), so one unplugged
+    bulb doesn't make every slider move wait for it to time out.
     """
+
+    # Shared by all groups, since the app makes a new group when settings change.
+    _offline: dict[str, tuple[float, float]] = {}  # bulb -> (skip until, current pause)
+    _busy: set[str] = set()  # bulbs with a slow command still running in the background
 
     def __init__(self, members: list, on_moved: Callable[[Any], None] | None = None):
         # members: objects with .name, .ip, .token, .did and .properties (config.BulbInfo)
         self.members = [(info, Bulb(info.ip, info.token, properties=info.properties)) for info in members]
         self.on_moved = on_moved
+        if len(self.members) > 1:
+            for _info, bulb in self.members:
+                # Bulbs on the local network answer within milliseconds; give up sooner in a group.
+                bulb.device.timeout, bulb.device.retries = 1.5, 1
+
+    def _skip(self, info: Any) -> float:
+        """Seconds until an offline bulb is tried again (0 = try it now)."""
+        if len(self.members) == 1:
+            return 0.0  # a single bulb is always tried, so it works again as soon as it's back
+        until, _pause = self._offline.get(self._key(info), (0.0, 0.0))
+        return max(0.0, until - time.monotonic())
+
+    @staticmethod
+    def _key(info: Any) -> str:
+        return f"{getattr(info, 'id', '')}:{info.token}"
+
+    def _mark(self, info: Any, online: bool) -> None:
+        if online:
+            self._offline.pop(self._key(info), None)
+        elif len(self.members) > 1:
+            _until, pause = self._offline.get(self._key(info), (0.0, 0.0))
+            pause = min(300.0, pause * 2) if pause else 30.0
+            self._offline[self._key(info)] = (time.monotonic() + pause, pause)
 
     @property
     def names(self) -> list[str]:
@@ -278,26 +354,69 @@ class BulbGroup:
                 self.on_moved(info)
             return func(bulb)
 
+    def _one(self, info: Any, bulb: Bulb, func: Callable[[Bulb], Any]) -> Any:
+        self._busy.add(self._key(info))
+        try:
+            result = self._with_relocate(info, bulb, func)
+        except DeviceUnreachable:
+            self._mark(info, online=False)
+            raise
+        finally:
+            self._busy.discard(self._key(info))
+        self._mark(info, online=True)
+        return result
+
     def _each(self, func: Callable[[Bulb], Any]) -> list:
+        if len(self.members) > 1:
+            # Still busy with an earlier command: don't pile up more tries on it.
+            busy = [info for info, _bulb in self.members if self._key(info) in self._busy]
+        else:
+            busy = []
+        active = [(info, bulb) for info, bulb in self.members if not self._skip(info) and info not in busy]
+        skipped = [info for info, _bulb in self.members if self._skip(info)]
         results, failed = [], []
-        for info, bulb in self.members:
-            try:
-                results.append(self._with_relocate(info, bulb, func))
-            except MiIOError as exc:
-                failed.append((info, exc))
-        if failed:
-            if len(self.members) == 1:
-                raise failed[0][1]
-            names = ", ".join(info.name for info, _exc in failed)
-            raise MiIOError(f"{names} didn't respond ({failed[0][1]})")
+        slow = []
+        if len(active) > 1:
+            # Send to all at once and wait only briefly: a bulb that is slow to answer keeps
+            # trying in the background (and gets marked offline if it fails) instead of
+            # holding up the next command.
+            pool = ThreadPoolExecutor(max_workers=len(active))
+            futures = {pool.submit(self._one, info, bulb, func): info for info, bulb in active}
+            done, pending = wait(futures, timeout=SLOW_SECONDS)
+            pool.shutdown(wait=False)
+            slow = [futures[future] for future in pending]
+            for future in done:
+                info = futures[future]
+                error = future.exception()
+                if error is None:
+                    results.append(future.result())
+                elif isinstance(error, MiIOError):
+                    failed.append((info, error))
+                else:
+                    raise error
+        else:
+            for info, bulb in active:
+                try:
+                    results.append(self._one(info, bulb, func))
+                except MiIOError as exc:
+                    failed.append((info, exc))
+        if failed and len(self.members) == 1:
+            raise failed[0][1]
+        problems = [f"{info.name} didn't respond ({exc})" for info, exc in failed]
+        problems += [f"{info.name} is offline (trying again in {round(self._skip(info))} s)" for info in skipped]
+        problems += [f"{info.name} is slow to answer" for info in slow + busy]
+        if problems:
+            raise MiIOError("; ".join(problems))
         return results
 
     def status(self) -> BulbState:
         """The state of the first bulb that answers."""
         first_error: MiIOError | None = None
         for info, bulb in self.members:
+            if self._skip(info):
+                continue
             try:
-                return self._with_relocate(info, bulb, lambda b: b.status())
+                return self._one(info, bulb, lambda b: b.status())
             except MiIOError as exc:
                 first_error = first_error or exc
         raise first_error or MiIOError("No bulbs")
@@ -331,6 +450,18 @@ class BulbGroup:
 
     def sync_color(self, rgb: int, brightness: int | None, fade_ms: int) -> None:
         self._each(lambda b: b.sync_color(rgb, brightness, fade_ms))
+
+    def start_effect(self, expression: str, count: int = 0, action: int = 1) -> None:
+        self._each(lambda b: b.start_effect(expression, count, action))
+
+    def stop_effect(self) -> None:
+        self._each(lambda b: b.stop_effect())
+
+    def set_off_timer(self, minutes: int) -> None:
+        self._each(lambda b: b.set_off_timer(minutes))
+
+    def cancel_off_timer(self) -> None:
+        self._each(lambda b: b.cancel_off_timer())
 
 
 def parse_color(text: str) -> int:

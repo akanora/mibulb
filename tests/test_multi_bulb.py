@@ -64,13 +64,14 @@ class GroupTest(unittest.TestCase):
         ports = self.ports
 
         def send(device, method, params=None):
-            with mock.patch.object(miio, "PORT", ports.get(device.ip, 1)):
-                real_ip = device.ip
-                device.ip = "127.0.0.1"
-                try:
-                    return original_send(device, method, params)
-                finally:
-                    device.ip = real_ip
+            # Each device has its own port, so bulbs talked to in parallel don't interfere.
+            real_ip = device.ip
+            device.port = ports.get(real_ip, 1)
+            device.ip = "127.0.0.1"
+            try:
+                return original_send(device, method, params)
+            finally:
+                device.ip = real_ip
 
         patcher = mock.patch.object(miio.Device, "send", send)
         patcher.start()
@@ -96,6 +97,27 @@ class GroupTest(unittest.TestCase):
         self.assertIn("Hall", str(caught.exception))
         self.assertEqual(self.fakes[0].props[2], 20)  # the working bulb still changed
         self.assertTrue(group.status() is not None)  # status comes from a bulb that answers
+
+    def test_offline_bulb_does_not_hold_up_the_others(self):
+        import time
+
+        bulb_mod.BulbGroup._offline.clear()
+        group = bulb_mod.BulbGroup([info("a", "Desk", "127.0.0.1"), info("z", "Hall", "127.0.0.9", did="77")])
+        with mock.patch.object(bulb_mod, "find_ip", side_effect=lambda did: time.sleep(2)):
+            for value in (21, 22, 23):
+                start = time.monotonic()
+                with self.assertRaises(miio.MiIOError) as caught:
+                    group.set_brightness(value)
+                self.assertLess(time.monotonic() - start, bulb_mod.SLOW_SECONDS + 0.5)
+                self.assertEqual(self.fakes[0].props[2], value)  # Desk changes straight away
+                self.assertIn("Hall", str(caught.exception))
+            time.sleep(4)  # the background try gives up and Hall is marked offline
+            start = time.monotonic()
+            with self.assertRaises(miio.MiIOError) as caught:
+                group.set_brightness(24)
+            self.assertLess(time.monotonic() - start, 0.3)
+            self.assertIn("offline", str(caught.exception))
+        bulb_mod.BulbGroup._offline.clear()
 
     def test_moved_bulb_is_found_again(self):
         moved = info("b", "Bed", "127.0.0.7", did="4242")
