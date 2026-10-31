@@ -1,0 +1,4 @@
+cryptography>=3.4
+pystray>=0.19
+Pillow>=9.0
+requests>=2.25

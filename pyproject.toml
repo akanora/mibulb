@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mibulb"
+dynamic = ["version"]
+description = "Control a Mi Smart LED Bulb Essential from your PC over the local network"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "cryptography>=3.4",
+    "pystray>=0.19",
+    "Pillow>=9.0",
+    "requests>=2.25",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+mibulb = "mibulb.cli:main"
+
+[project.gui-scripts]
+mibulb-gui = "mibulb.gui:main"
+
+[tool.setuptools]
+packages = ["mibulb"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mibulb.__version__" }

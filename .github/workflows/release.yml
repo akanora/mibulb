@@ -1,0 +1,62 @@
+# Builds MiBulb.exe on a clean GitHub-hosted runner and publishes it as a
+# release, with a SHA-256 checksum and a signed build provenance attestation.
+#
+# To release: bump __version__ in mibulb/__init__.py, then
+#   git tag v0.1.0
+#   git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write       # create the release
+  id-token: write       # sign the attestation
+  attestations: write   # store the attestation
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check tag matches version
+        shell: pwsh
+        run: |
+          $version = python -c "import mibulb; print(mibulb.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match mibulb.__version__ ($version)"
+          }
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build exe
+        run: python -m PyInstaller --noconfirm --onefile --windowed --icon assets/icon.ico --name MiBulb run_gui.py
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/MiBulb.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  MiBulb.exe" | Out-File -Encoding ascii dist/MiBulb.exe.sha256
+          Get-Content dist/MiBulb.exe.sha256
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/MiBulb.exe
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MiBulb.exe
+            dist/MiBulb.exe.sha256
+          generate_release_notes: true
