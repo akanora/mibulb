@@ -14,10 +14,13 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 - Sleep timer that fades out, sunrise wake-up, and schedules (on/off/scene at set times)
 - Follows your PC: off when you lock it or it sleeps, back on when you return
 - Updates itself: new versions are downloaded, checked and installed automatically
+- In English or Turkish (Türkçe): follows your Windows language, or pick one in settings
 - Control it from the command line, for scripts, shortcuts or Task Scheduler
 - Scan the network to find the bulb's IP
 
 Tested target: model `MJDPL01YL` / `yeelink.light.color5`. Other MIoT lights may work if you override the property ids (see [Other bulbs](#other-bulbs)).
+
+> **Türkçe:** Mi Bulb, Mi Smart LED Bulb Essential ampulünüzü bilgisayarınızdan, ek donanım olmadan ve yerel ağ üzerinden kontrol eder. Windows diliniz Türkçeyse uygulama otomatik olarak Türkçe açılır; dili Ayarlar → Uygulama → Dil bölümünden değiştirebilirsiniz. İndirmek için [son sürüm](https://github.com/akanora/mibulb/releases/latest) sayfasından `MiBulb-Setup.exe` dosyasını çalıştırın, ardından **Xiaomi ile giriş yap** düğmesine tıklayıp QR kodu Xiaomi Home uygulamasıyla okutun.
 
 ## Requirements
 
@@ -137,6 +140,12 @@ Open settings with ⚙ in the window, or **Settings…** in the tray menu. The *
 | Forget this bulb | Removes the bulb's name, IP and token from this PC, but keeps your app options. |
 
 App options are saved as soon as you change them.
+
+### Language
+
+Mi Bulb is in English and Turkish. **Automatic** follows your Windows display language. You can also pick one under Settings → App → Language and click **Restart now**.
+
+To add a language, add a table of translations to `mibulb/i18n.py`. The app's text is translated as it's shown, so nothing else needs to change.
 
 ### Keyboard shortcuts
 

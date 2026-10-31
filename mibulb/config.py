@@ -110,6 +110,7 @@ class Config:
     unlock_on: bool = False  # turn back on when you return (if Mi Bulb turned it off)
     tray_click: str = "panel"  # left-click on the tray icon: "panel" or "toggle"
     sync_brightness: bool = True  # screen sync also follows how bright the screen is
+    language: str = "auto"  # "auto" (Windows language), "en" or "tr"
 
     @property
     def usable_bulbs(self) -> list[BulbInfo]:
@@ -166,6 +167,7 @@ def load(path: Path | None = None) -> Config:
         unlock_on=bool(data.get("unlock_on", False)),
         tray_click="toggle" if data.get("tray_click") == "toggle" else "panel",
         sync_brightness=bool(data.get("sync_brightness", True)),
+        language=str(data.get("language", "auto")),
     )
 
 
@@ -184,6 +186,7 @@ def save(config: Config, path: Path | None = None) -> Path:
         "unlock_on": config.unlock_on,
         "tray_click": config.tray_click,
         "sync_brightness": config.sync_brightness,
+        "language": config.language,
     }
     if config.skipped_update:
         data["skipped_update"] = config.skipped_update

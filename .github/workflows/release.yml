@@ -3,8 +3,8 @@
 # signed build provenance attestation.
 #
 # To release: bump __version__ in mibulb/__init__.py, then
-#   git tag v0.8.0
-#   git push origin v0.8.0
+#   git tag v0.9.0
+#   git push origin v0.9.0
 name: Release
 
 on:

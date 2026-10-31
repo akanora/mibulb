@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--token", help="32-character device token (overrides config.json)")
     parser.add_argument("--bulb", help="which bulb to control: its name, or 'all' (default: the one picked in the app)")
     parser.add_argument("--minimized", action="store_true", help="start the window hidden in the system tray")
+    parser.add_argument("--restarted", action="store_true", help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     sub.add_parser("gui", help="open the window (default)")
@@ -88,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in (None, "gui"):
         from .gui import main as gui_main
 
-        gui_main(start_minimized=args.minimized)
+        gui_main(start_minimized=args.minimized, restarted=args.restarted)
         return
 
     try:

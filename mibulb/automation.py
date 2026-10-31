@@ -11,6 +11,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
+from .i18n import t
+
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 WEEKDAYS = [0, 1, 2, 3, 4]
 WEEKEND = [5, 6]
@@ -69,14 +71,14 @@ def normalise_time(text: str) -> str:
 def describe_days(days: list[int]) -> str:
     days = sorted(set(days))
     if days == EVERY_DAY:
-        return "Every day"
+        return t("Every day")
     if days == WEEKDAYS:
-        return "Weekdays"
+        return t("Weekdays")
     if days == WEEKEND:
-        return "Weekends"
+        return t("Weekends")
     if not days:
-        return "Never"
-    return ", ".join(DAY_NAMES[d] for d in days)
+        return t("Never")
+    return ", ".join(t(DAY_NAMES[d]) for d in days)
 
 
 def sunrise_minutes(action: str) -> int | None:

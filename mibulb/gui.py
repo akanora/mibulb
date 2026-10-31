@@ -14,7 +14,8 @@ from datetime import datetime
 from tkinter import colorchooser, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
-from . import __version__, automation, hotkey, pcevents, screensync, startup, updates
+from . import __version__, automation, hotkey, i18n, pcevents, screensync, startup, updates
+from .i18n import t
 from . import config as config_mod
 from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbGroup, BulbState
 from .cloud import Cancelled, CloudDevice, QrLogin, XiaomiCloud
@@ -411,10 +412,10 @@ class SettingsDialog(tk.Toplevel):
         app_tab = ttk.Frame(notebook, padding=16)
         keys_tab = ttk.Frame(notebook, padding=16)
         auto_tab = ttk.Frame(notebook, padding=16)
-        notebook.add(body, text="Bulbs")
-        notebook.add(app_tab, text="App")
-        notebook.add(keys_tab, text="Shortcuts")
-        notebook.add(auto_tab, text="Automation")
+        notebook.add(body, text=t("Bulbs"))
+        notebook.add(app_tab, text=t("App"))
+        notebook.add(keys_tab, text=t("Shortcuts"))
+        notebook.add(auto_tab, text=t("Automation"))
         self._capturing: str | None = None
         self._build_app_tab(app_tab)
         self._build_shortcuts_tab(keys_tab)
@@ -467,7 +468,7 @@ class SettingsDialog(tk.Toplevel):
         self.cloud_pick = ttk.Combobox(body, state="readonly", width=40)
         self.cloud_pick.grid(row=5, column=1, sticky="we", padx=(8, 0))
         self.cloud_pick.bind("<<ComboboxSelected>>", self._pick_cloud)
-        self.cloud_pick.set("No devices yet")
+        self.cloud_pick.set(t("No devices yet"))
         self.add_all_button = ttk.Button(body, text="Add all lights from my account", command=self._add_all_cloud,
                                          state="disabled")
         self.add_all_button.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
@@ -573,6 +574,18 @@ class SettingsDialog(tk.Toplevel):
         for value, text in (("panel", "Left-click opens the quick panel"), ("toggle", "Left-click toggles the light")):
             ttk.Radiobutton(tab, text=text, value=value, variable=self.tray_click_var,
                             command=self._set_tray_click).pack(anchor="w")
+
+        section("Language")
+        self.language_var = tk.StringVar(value=self._app.cfg.language)
+        row = self._language_row = ttk.Frame(tab)
+        row.pack(fill="x")
+        for value, text in [("auto", "Automatic (Windows language)")] + list(i18n.LANGUAGES.items()):
+            ttk.Radiobutton(row, text=text, value=value, variable=self.language_var,
+                            command=self._set_language).pack(side="left", padx=(0, 12))
+        self.language_note = ttk.Frame(tab)
+        ttk.Label(self.language_note, text="Restart Mi Bulb to use the new language.",
+                  style="Muted.TLabel").pack(side="left")
+        ttk.Button(self.language_note, text="Restart now", command=self._app.restart).pack(side="left", padx=(8, 0))
 
         section("Screen sync")
         self.sync_brightness_var = tk.BooleanVar(value=self._app.cfg.sync_brightness)
@@ -792,6 +805,14 @@ class SettingsDialog(tk.Toplevel):
             self._app.apply_shortcuts()
         super().destroy()
 
+    def _set_language(self) -> None:
+        self._app.cfg.language = self.language_var.get()
+        config_mod.save(self._app.cfg)
+        if i18n.resolve(self._app.cfg.language) != i18n.current():
+            self.language_note.pack(anchor="w", pady=(4, 0), after=self._language_row)
+        else:
+            self.language_note.pack_forget()
+
     def _set_sync_brightness(self) -> None:
         self._app.cfg.sync_brightness = self.sync_brightness_var.get()
         config_mod.save(self._app.cfg)
@@ -870,7 +891,7 @@ class SettingsDialog(tk.Toplevel):
         self._cloud_devices = lights + [d for d in dialog.devices if not d.is_light]
         if not self._cloud_devices:
             self.cloud_pick.configure(values=[])
-            self.cloud_pick.set("No devices found on this account")
+            self.cloud_pick.set(t("No devices found on this account"))
             return
         self.cloud_pick.configure(values=[d.label for d in self._cloud_devices])
         self.cloud_pick.current(0)
@@ -955,7 +976,7 @@ class SettingsDialog(tk.Toplevel):
             devices = []
         values = [f"{ip}  (device id {did})" for ip, did in devices]
         self.found.configure(values=values)
-        self.found.set(values[0] if values else "No miIO devices found")
+        self.found.set(values[0] if values else t("No miIO devices found"))
         self._pick_found()
 
     def _save(self) -> None:
@@ -984,13 +1005,16 @@ class SettingsDialog(tk.Toplevel):
 
 class App(tk.Tk):
     def __init__(self, start_minimized: bool = False):
+        cfg = config_mod.load()
+        i18n.set_language(i18n.resolve(cfg.language))
+        i18n.install_tk()
         super().__init__()
         self.title("Mi Bulb")
         self.configure(bg=BG)
         self.resizable(False, False)
         self._setup_style()
 
-        self.cfg = config_mod.load()
+        self.cfg = cfg
         self.bulb: Bulb | None = None
         self.bulb_state: BulbState | None = None
         self._syncing = False  # True while updating widgets from the bulb's state
@@ -1401,7 +1425,7 @@ class App(tk.Tk):
         self._set_status(f"Connected to {self._target_text()} · {mode} mode")
         if self.tray is not None:
             self.tray.icon = make_icon_image(state.on)
-            self.tray.title = f"{self.cfg.display_name}: {'on' if state.on else 'off'}"
+            self.tray.title = t(f"{self.cfg.display_name}: {'on' if state.on else 'off'}")
 
     def _set_status(self, text: str, error: bool = False) -> None:
         self.status_label.configure(text=text, foreground=ERROR if error else MUTED)
@@ -1566,43 +1590,43 @@ class App(tk.Tk):
                                         and self.cfg.usable_bulbs[0].id == bulb_id))
 
         def light_items():
-            yield light_item(config_mod.ALL, "All lights")
+            yield light_item(config_mod.ALL, t("All lights"))
             yield pystray.Menu.SEPARATOR
             for info in self.cfg.usable_bulbs:
                 yield light_item(info.id, info.name)
 
         menu = pystray.Menu(
             # Left-clicking the icon runs the default item: the quick panel or toggle (see settings).
-            pystray.MenuItem("Quick panel", lambda: post(self._tray_click), default=True, visible=False),
-            pystray.MenuItem("Light", pystray.Menu(light_items),
+            pystray.MenuItem(t("Quick panel"), lambda: post(self._tray_click), default=True, visible=False),
+            pystray.MenuItem(t("Light"), pystray.Menu(light_items),
                              visible=lambda _item: len(self.cfg.usable_bulbs) > 1),
-            pystray.MenuItem("Toggle", lambda: post(self.toggle)),
-            pystray.MenuItem("Turn on", lambda: post(lambda: self.turn(True))),
-            pystray.MenuItem("Turn off", lambda: post(lambda: self.turn(False))),
-            pystray.MenuItem("Brightness", pystray.Menu(*[
+            pystray.MenuItem(t("Toggle"), lambda: post(self.toggle)),
+            pystray.MenuItem(t("Turn on"), lambda: post(lambda: self.turn(True))),
+            pystray.MenuItem(t("Turn off"), lambda: post(lambda: self.turn(False))),
+            pystray.MenuItem(t("Brightness"), pystray.Menu(*[
                 pystray.MenuItem(f"{level}%", action(self._tray_brightness, level))
                 for level in (100, 75, 50, 25, 10)
             ])),
-            pystray.MenuItem("White", pystray.Menu(*[
-                pystray.MenuItem(name, action(self._set_kelvin, kelvin))
+            pystray.MenuItem(t("White"), pystray.Menu(*[
+                pystray.MenuItem(t(name), action(self._set_kelvin, kelvin))
                 for name, kelvin in PRESET_WHITES
             ])),
             # A callable menu is rebuilt each time it opens, so it follows scene edits.
-            pystray.MenuItem("Scenes", pystray.Menu(lambda: (
-                pystray.MenuItem(scene.name, scene_action(scene.id)) for scene in self.cfg.scenes
+            pystray.MenuItem(t("Scenes"), pystray.Menu(lambda: (
+                pystray.MenuItem(t(scene.name), scene_action(scene.id)) for scene in self.cfg.scenes
             ))),
-            pystray.MenuItem("Screen sync", lambda: post(self.toggle_screen_sync),
+            pystray.MenuItem(t("Screen sync"), lambda: post(self.toggle_screen_sync),
                              checked=lambda _item: self.screen_sync is not None),
-            pystray.MenuItem("Sleep timer", pystray.Menu(
-                *[pystray.MenuItem(f"Off in {m} min", action(self.start_sleep_timer, m))
+            pystray.MenuItem(t("Sleep timer"), pystray.Menu(
+                *[pystray.MenuItem(t(f"Off in {m} min"), action(self.start_sleep_timer, m))
                   for m in automation.SLEEP_TIMER_MINUTES],
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Cancel timer", lambda: post(self.cancel_program)),
+                pystray.MenuItem(t("Cancel timer"), lambda: post(self.cancel_program)),
             )),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Open window", lambda: post(self.show)),
-            pystray.MenuItem("Settings…", lambda: post(lambda: self.open_settings("app"))),
-            pystray.MenuItem("Quit", lambda: post(self.quit_app)),
+            pystray.MenuItem(t("Open window"), lambda: post(self.show)),
+            pystray.MenuItem(t("Settings…"), lambda: post(lambda: self.open_settings("app"))),
+            pystray.MenuItem(t("Quit"), lambda: post(self.quit_app)),
         )
         self.tray = pystray.Icon("mibulb", make_icon_image(True), "Mi Bulb", menu)
         self.tray.run_detached()
@@ -1821,6 +1845,19 @@ class App(tk.Tk):
         self._sync_slider(self.brightness_label, percent)
         self._run("brightness", lambda b: b.set_brightness(percent), refresh=True)
 
+    def restart(self) -> None:
+        """Start a fresh copy (it waits for this one to close), then quit."""
+        import subprocess
+
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--restarted"]
+        else:
+            command = [sys.executable, "-m", "mibulb", "--restarted"]
+        if self.state() == "withdrawn":
+            command.append("--minimized")
+        subprocess.Popen(command, close_fds=True)
+        self.quit_app()
+
     def quit_app(self) -> None:
         self.after_cancel(self._poll_id)
         self.after_cancel(self._tick_id)
@@ -1833,8 +1870,16 @@ class App(tk.Tk):
         self.destroy()
 
 
-def main(start_minimized: bool = False) -> None:
+def main(start_minimized: bool = False, restarted: bool = False) -> None:
+    import time
+
     from .single_instance import InstanceServer, notify_existing
+
+    if restarted:
+        # Started by "Restart now": give the old copy a moment to close.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and notify_existing(show=False):
+            time.sleep(0.25)
 
     # Already running? Bring that window forward instead of opening a second one.
     # A --minimized launch (e.g. at Windows startup) just exits quietly.
