@@ -16,6 +16,7 @@ from urllib.request import urlopen
 
 REPO = "akanora/mibulb"
 PACKAGE = "akanora.MiBulb"
+PRODUCT_CODE = "{2A6700FD-B38A-43AB-9AB8-3CA82B93A8F6}_is1"  # AppId from installer/mibulb.iss
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -55,6 +56,8 @@ Installers:
   - Architecture: x64
     InstallerUrl: {setup["browser_download_url"]}
     InstallerSha256: {sha256}
+    # Inno Setup's uninstall entry is the AppId plus "_is1"; it lets winget find and upgrade installs
+    ProductCode: "{PRODUCT_CODE}"
 ManifestType: installer
 ManifestVersion: 1.6.0
 """,
