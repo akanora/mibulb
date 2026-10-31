@@ -17,6 +17,7 @@ from urllib.request import urlopen
 REPO = "akanora/mibulb"
 PACKAGE = "akanora.MiBulb"
 PRODUCT_CODE = "{2A6700FD-B38A-43AB-9AB8-3CA82B93A8F6}_is1"  # AppId from installer/mibulb.iss
+SCHEMA = "1.12.0"  # winget manifest schema version
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -36,13 +37,13 @@ def main() -> None:
     sha256 = setup["digest"].split(":", 1)[1].upper()
     out = ROOT / "packaging" / "winget" / version
     out.mkdir(parents=True, exist_ok=True)
-    header = "# yaml-language-server: $schema=https://aka.ms/winget-manifest.{kind}.1.6.0.schema.json\n\n"
+    header = "# yaml-language-server: $schema=https://aka.ms/winget-manifest.{kind}." + SCHEMA + ".schema.json\n\n"
     files = {
         f"{PACKAGE}.yaml": header.format(kind="version") + f"""PackageIdentifier: {PACKAGE}
 PackageVersion: {version}
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.6.0
+ManifestVersion: {SCHEMA}
 """,
         f"{PACKAGE}.installer.yaml": header.format(kind="installer") + f"""PackageIdentifier: {PACKAGE}
 PackageVersion: {version}
@@ -59,7 +60,7 @@ Installers:
     # Inno Setup's uninstall entry is the AppId plus "_is1"; it lets winget find and upgrade installs
     ProductCode: "{PRODUCT_CODE}"
 ManifestType: installer
-ManifestVersion: 1.6.0
+ManifestVersion: {SCHEMA}
 """,
         f"{PACKAGE}.locale.en-US.yaml": header.format(kind="defaultLocale") + f"""PackageIdentifier: {PACKAGE}
 PackageVersion: {version}
@@ -83,7 +84,7 @@ Tags:
   - lights
 ReleaseNotesUrl: {data["html_url"]}
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: {SCHEMA}
 """,
     }
     for name, text in files.items():

@@ -11,3 +11,6 @@ venv/
 build/
 dist/
 *.spec
+
+# winget manifests made by tools/winget_manifest.py (regenerated for each release)
+packaging/
