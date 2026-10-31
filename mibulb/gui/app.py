@@ -17,7 +17,8 @@ from ..bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, MODE_WHITE, Bulb, BulbGro
 from ..i18n import t
 from ..miio import MiIOError
 from ..scenes import Scene
-from .common import ACCENT, BG, ERROR, Image, ImageTk, make_icon_image, MUTED, PANEL, PRESET_COLORS, PRESET_WHITES, pystray, run_in_thread, TEXT, Worker
+from .common import (ACCENT, BG, ERROR, MUTED, PANEL, PRESET_COLORS, PRESET_WHITES, TEXT, Image, ImageTk, ScrollFrame,
+                     Worker, fit_to_screen, make_icon_image, pystray, run_in_thread)
 from .quickpanel import QuickPanel
 from .settings import SettingsDialog
 
@@ -30,7 +31,6 @@ class App(tk.Tk):
         super().__init__()
         self.title("Mi Bulb")
         self.configure(bg=BG)
-        self.resizable(False, False)
         self._setup_style()
 
         self.cfg = cfg
@@ -76,6 +76,7 @@ class App(tk.Tk):
         if Image is not None:
             self._icons = [ImageTk.PhotoImage(make_icon_image(size=n)) for n in (64, 32, 16)]
             self.iconphoto(True, *self._icons)
+        fit_to_screen(self, min_size=(340, 300))
         if start_minimized and self.tray is not None:
             self.withdraw()
         if config_mod.load_problems:
@@ -117,6 +118,9 @@ class App(tk.Tk):
         style.map("TCheckbutton", background=[("active", BG)],
                   indicatorbackground=[("selected", ACCENT), ("active", "#3a3d46")])
         style.configure("Horizontal.TScale", background=PANEL, troughcolor="#3a3d46")
+        style.configure("Vertical.TScrollbar", background=PANEL, troughcolor=BG, bordercolor=BG, arrowcolor=TEXT,
+                        lightcolor=PANEL, darkcolor=PANEL, gripcount=0)
+        style.map("Vertical.TScrollbar", background=[("active", "#3a3d46"), ("pressed", "#474a55")])
         style.configure("TCombobox", fieldbackground=PANEL, background=PANEL, foreground=TEXT, arrowcolor=TEXT,
                         selectbackground=PANEL, selectforeground=TEXT, bordercolor="#3a3d46",
                         lightcolor=PANEL, darkcolor=PANEL)
@@ -136,8 +140,10 @@ class App(tk.Tk):
         self.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
 
     def _build(self) -> None:
-        root = ttk.Frame(self, padding=16)
-        root.pack(fill="both", expand=True)
+        # Scrolls when the window is shorter than its content (small screens, big scaling)
+        self.scroller = ScrollFrame(self, padding=16)
+        self.scroller.pack(fill="both", expand=True)
+        root = self.scroller.inner
 
         header = ttk.Frame(root)
         header.pack(fill="x")

@@ -20,6 +20,7 @@ from mibulb import api, automation, config, effects, i18n, miio, screensync
 from mibulb import bulb as bulb_mod
 from mibulb import gui
 from mibulb.gui import app as app_module
+from mibulb.gui.common import work_area
 from mibulb.gui import settings as settings_module
 from test_miio import TOKEN, FakeBulb
 
@@ -83,6 +84,14 @@ class WindowTest(unittest.TestCase):
         # Tkinter prints "main thread is not in main loop".
         gc.collect()
 
+    @staticmethod
+    def show_invisibly(window, size):
+        """Lay a window out for real (Tk skips that for hidden windows) without it being seen or clicked."""
+        window.attributes("-alpha", 0.0)
+        window.geometry(f"{size}+-20000+-20000")
+        window.deiconify()
+        window.update()
+
     def pump(self, seconds):
         end = time.time() + seconds
         while time.time() < end:
@@ -108,6 +117,20 @@ class MainWindowTest(WindowTest):
         self.app._set_color("#ff0000")
         self.pump(0.8)
         self.assertEqual((self.desk[4], self.desk[5]), (0xFF0000, 1))
+
+    def test_main_window_fits_the_screen_and_can_be_resized(self):
+        self.app.update_idletasks()
+        height = int(self.app.geometry().split("+")[0].split("x")[1])
+        left, top, right, bottom = work_area()
+        self.assertLessEqual(height, bottom - top)
+        self.assertEqual(self.app.resizable(), (True, True))
+        self.show_invisibly(self.app, "360x320")
+        canvas = self.app.scroller.canvas
+        self.assertGreater(canvas.winfo_height(), 250)
+        self.assertLess(canvas.yview()[1], 1.0)  # content scrolls in a short window
+        self.assertTrue(self.app.scroller.bar.winfo_ismapped())
+        self.show_invisibly(self.app, "420x2000")  # tall enough: no scrollbar
+        self.assertFalse(self.app.scroller.bar.winfo_ismapped())
 
     def test_scenes(self):
         gaming = next(s for s in self.app.cfg.scenes if s.name == "Gaming")
@@ -283,6 +306,34 @@ class SettingsWindowTest(WindowTest):
         editor._save()
         self.assertEqual((editor.result.time, editor.result.days, editor.result.action),
                          ("06:45", automation.WEEKDAYS, "sunrise:15"))
+
+    def test_fits_the_screen_and_long_tabs_scroll(self):
+        # Open settings the way the app does (main window showing), but invisibly.
+        self.show_invisibly(self.app, "400x400")
+        real_fit = settings_module.fit_to_screen
+
+        def invisible_fit(window, **kwargs):
+            window.attributes("-alpha", 0.0)
+            real_fit(window, **kwargs)
+
+        with mock.patch.object(settings_module, "fit_to_screen", invisible_fit):
+            dialog = gui.SettingsDialog(self.app, self.app.cfg, self.app._ui_calls.put, tab="shortcuts")
+        self.addCleanup(lambda: dialog.winfo_exists() and dialog.destroy())
+        dialog.update()
+        height = int(dialog.geometry().split("+")[0].split("x")[1])
+        left, top, right, bottom = work_area()
+        self.assertLessEqual(height, bottom - top)
+        self.assertEqual(dialog.resizable(), (True, True))
+
+        dialog.geometry("520x380+-20000+-20000")  # a small window: the shortcut list can't fit
+        dialog.update()
+        page = dialog.pages["shortcuts"]
+        self.assertGreater(page.canvas.winfo_height(), 150)  # the tab gets the window's room...
+        self.assertLess(page.canvas.yview()[1], 0.6)  # ...and the rest of the list is reachable by scrolling
+        self.assertTrue(page.bar.winfo_ismapped())
+        page.canvas.yview_moveto(1.0)
+        dialog.update()
+        self.assertGreater(page.canvas.yview()[0], 0.0)
 
     def test_dropdowns_are_readable(self):
         style = gui.app.ttk.Style(self.app)

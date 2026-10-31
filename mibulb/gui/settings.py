@@ -16,7 +16,7 @@ from .. import config as config_mod
 from ..cloud import CloudDevice
 from ..i18n import t
 from ..miio import discover, find_ip
-from .common import ACCENT, BG, ERROR, MUTED, PANEL, Post, run_in_thread, TEXT
+from .common import ACCENT, BG, ERROR, MUTED, PANEL, Post, ScrollFrame, TEXT, fit_to_screen, run_in_thread
 from .dialogs import QrLoginDialog, ScheduleDialog
 
 if TYPE_CHECKING:
@@ -38,7 +38,6 @@ class SettingsDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("Mi Bulb settings")
         self.configure(bg=BG)
-        self.resizable(False, False)
         self.transient(parent)
         self.changed = False
         self._post = post
@@ -47,29 +46,31 @@ class SettingsDialog(tk.Toplevel):
         self._cloud_devices: list[CloudDevice] = []
         self._app = parent
 
+        # Buttons first, at the bottom, so they stay visible however small the window gets.
+        buttons = ttk.Frame(self, padding=(16, 12, 16, 16))
+        buttons.pack(side="bottom", fill="x")
+        ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="Save bulb", style="Accent.TButton", command=self._save).pack(side="right")
+        ttk.Label(buttons, text="App options are saved as you change them.", style="Muted.TLabel").pack(side="left")
+
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=(8, 0))
-        body = ttk.Frame(notebook, padding=16)
-        app_tab = ttk.Frame(notebook, padding=16)
-        keys_tab = ttk.Frame(notebook, padding=16)
-        auto_tab = ttk.Frame(notebook, padding=16)
-        notebook.add(body, text=t("Bulbs"))
-        notebook.add(app_tab, text=t("App"))
-        notebook.add(keys_tab, text=t("Shortcuts"))
-        notebook.add(auto_tab, text=t("Automation"))
+        # Each tab scrolls when it doesn't fit (the Shortcuts tab grows with every scene and effect).
+        pages = {name: ScrollFrame(notebook, padding=16) for name in ("bulb", "app", "shortcuts", "automation")}
+        for name, label in (("bulb", "Bulbs"), ("app", "App"), ("shortcuts", "Shortcuts"),
+                            ("automation", "Automation")):
+            notebook.add(pages[name], text=t(label))
+        self.pages = pages
+        body, app_tab = pages["bulb"].inner, pages["app"].inner
+        keys_tab, auto_tab = pages["shortcuts"].inner, pages["automation"].inner
         self._capturing: str | None = None
         self._build_app_tab(app_tab)
         self._build_shortcuts_tab(keys_tab)
         self._build_automation_tab(auto_tab)
-        notebook.select({"app": app_tab, "shortcuts": keys_tab, "automation": auto_tab}.get(tab, body))
+        notebook.select(pages.get(tab, pages["bulb"]))
 
         self._build_bulbs_tab(body)
-
-        buttons = ttk.Frame(self, padding=(16, 12, 16, 16))
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right", padx=(8, 0))
-        ttk.Button(buttons, text="Save bulb", style="Accent.TButton", command=self._save).pack(side="right")
-        ttk.Label(buttons, text="App options are saved as you change them.", style="Muted.TLabel").pack(side="left")
+        fit_to_screen(self, min_size=(480, 360))
 
         self.bind("<Return>", lambda _e: None if self._capturing else self._save())
         self.bind("<Escape>", lambda _e: self._end_capture() if self._capturing else self.destroy())
