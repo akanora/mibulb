@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .automation import Schedule
 from .scenes import Scene, default_scenes
 
 # Keyboard shortcut actions: (id, label, default shortcut). "" means not set.
@@ -31,6 +32,7 @@ SHORTCUT_ACTIONS = [
     ("neutral", "Neutral white", ""),
     ("daylight", "Daylight", ""),
     ("window", "Show Mi Bulb window", ""),
+    ("sleep", "Sleep timer (30 min)", ""),
 ]
 DEFAULT_SHORTCUTS = {action: default for action, _label, default in SHORTCUT_ACTIONS}
 
@@ -64,6 +66,9 @@ class Config:
     skipped_update: str = ""  # a version whose automatic install was cancelled
     shortcuts: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))
     scenes: list[Scene] = field(default_factory=default_scenes)
+    schedules: list[Schedule] = field(default_factory=list)
+    lock_off: bool = False  # turn off when the PC locks or sleeps
+    unlock_on: bool = False  # turn back on when you return (if Mi Bulb turned it off)
 
     @property
     def is_complete(self) -> bool:
@@ -88,6 +93,9 @@ def load(path: Path | None = None) -> Config:
         shortcuts={**DEFAULT_SHORTCUTS, **{k: str(v) for k, v in data.get("shortcuts", {}).items()
                                            if k in DEFAULT_SHORTCUTS or k.startswith("scene:")}},
         scenes=[Scene.from_dict(d) for d in data["scenes"]] if "scenes" in data else default_scenes(),
+        schedules=[Schedule.from_dict(d) for d in data.get("schedules", [])],
+        lock_off=bool(data.get("lock_off", False)),
+        unlock_on=bool(data.get("unlock_on", False)),
     )
 
 
@@ -105,6 +113,9 @@ def save(config: Config, path: Path | None = None) -> Path:
         data["skipped_update"] = config.skipped_update
     data["shortcuts"] = config.shortcuts
     data["scenes"] = [scene.to_dict() for scene in config.scenes]
+    data["schedules"] = [schedule.to_dict() for schedule in config.schedules]
+    data["lock_off"] = config.lock_off
+    data["unlock_on"] = config.unlock_on
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -112,4 +123,5 @@ def save(config: Config, path: Path | None = None) -> Path:
 def forget_bulb(config: Config) -> Config:
     """Return a copy without the bulb's name, IP, token and device id, keeping app preferences."""
     return Config(properties=config.properties, hotkey=config.hotkey, check_updates=config.check_updates,
-                  shortcuts=dict(config.shortcuts), scenes=list(config.scenes))
+                  shortcuts=dict(config.shortcuts), scenes=list(config.scenes), schedules=list(config.schedules),
+                  lock_off=config.lock_off, unlock_on=config.unlock_on)

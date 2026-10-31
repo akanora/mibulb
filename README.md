@@ -9,6 +9,8 @@ Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC
 - Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
 - Scenes: one-click favourites like Reading, Relax, Movie and Gaming. Save your own and give them shortcuts.
+- Sleep timer that fades out, sunrise wake-up, and schedules (on/off/scene at set times)
+- Follows your PC: off when you lock it or it sleeps, back on when you return
 - Updates itself: new versions are downloaded, checked and installed automatically
 - Control it from the command line, for scripts, shortcuts or Task Scheduler
 - Scan the network to find the bulb's IP
@@ -80,6 +82,15 @@ The **Scenes** panel in the window has one-click favourites. It starts with Read
 - **+ Save current** saves what the bulb is doing right now as a new scene.
 - **Right-click** a scene to update it to the current light, rename it, give it a shortcut or delete it.
 - Scenes also appear in the tray menu, and each one can have its own keyboard shortcut (Settings → Shortcuts).
+
+## Timers and automation
+
+- **Sleep timer** (⏾ in the window, or the tray menu): slowly dims the light over 15–90 minutes, then turns it off. You can also give it a keyboard shortcut.
+- **Sunrise wake-up:** starts as a faint deep-orange glow and brightens to full neutral white over 10, 15 or 30 minutes. Start one now from ⏾, or schedule it.
+- **Schedules** (Settings → Automation): run Turn on, Turn off, a scene or a sunrise at a time of day, on the days you choose.
+- **Follow the PC** (Settings → Automation): turn the light off when you lock the PC or it goes to sleep, and back on when you return. It only turns the light back on if Mi Bulb was the one that turned it off.
+
+Changing the light yourself (a slider, a scene, a shortcut) stops a running timer or sunrise. Timers and schedules run inside Mi Bulb, so it needs to be running, which it can do quietly in the tray.
 
 ## Updates
 

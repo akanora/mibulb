@@ -9,10 +9,11 @@ import threading
 import tkinter as tk
 import webbrowser
 from collections import OrderedDict
+from datetime import datetime
 from tkinter import colorchooser, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
-from . import __version__, hotkey, startup, updates
+from . import __version__, automation, hotkey, pcevents, startup, updates
 from . import config as config_mod
 from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbState
 from .cloud import Cancelled, CloudDevice, QrLogin, XiaomiCloud
@@ -192,6 +193,87 @@ class QrLoginDialog(tk.Toplevel):
         self.destroy()
 
 
+class ScheduleDialog(tk.Toplevel):
+    """Add or edit one schedule: a time, weekdays and an action."""
+
+    def __init__(self, parent: tk.Misc, app: "App", schedule: automation.Schedule | None):
+        super().__init__(parent)
+        self.title("Schedule")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result: automation.Schedule | None = None
+        self._id = schedule.id if schedule else automation.new_id()
+        self._enabled = schedule.enabled if schedule else True
+        hour, minute = (schedule.time if schedule else "07:00").split(":")
+
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text="Time", style="Section.TLabel").pack(anchor="w")
+        row = ttk.Frame(body)
+        row.pack(anchor="w", pady=(4, 12))
+        self.hour = tk.StringVar(value=hour)
+        self.minute = tk.StringVar(value=minute)
+        for var, top in ((self.hour, 23), (self.minute, 59)):
+            spin = tk.Spinbox(row, from_=0, to=top, textvariable=var, width=3, format="%02.0f", wrap=True,
+                              font=("Segoe UI", 12), bg=PANEL, fg=TEXT, buttonbackground=PANEL,
+                              insertbackground=TEXT, relief="flat", justify="center")
+            spin.pack(side="left")
+            if var is self.hour:
+                ttk.Label(row, text=" : ", font=("Segoe UI", 12)).pack(side="left")
+
+        ttk.Label(body, text="Days", style="Section.TLabel").pack(anchor="w")
+        days = ttk.Frame(body)
+        days.pack(anchor="w", pady=(4, 0))
+        chosen = schedule.days if schedule else automation.EVERY_DAY
+        self.day_vars = [tk.BooleanVar(value=i in chosen) for i in range(7)]
+        for i, name in enumerate(automation.DAY_NAMES):
+            ttk.Checkbutton(days, text=name, variable=self.day_vars[i]).pack(side="left", padx=(0, 6))
+        quick = ttk.Frame(body)
+        quick.pack(anchor="w", pady=(6, 12))
+        for label, picked in (("Every day", automation.EVERY_DAY), ("Weekdays", automation.WEEKDAYS),
+                              ("Weekends", automation.WEEKEND)):
+            ttk.Button(quick, text=label, command=lambda p=picked: self._pick_days(p)).pack(side="left", padx=(0, 6))
+
+        ttk.Label(body, text="Do this", style="Section.TLabel").pack(anchor="w")
+        self._actions = [("on", "Turn on"), ("off", "Turn off")]
+        self._actions += [(f"sunrise:{m}", f"Sunrise wake-up ({m} min)") for m in automation.SUNRISE_MINUTES]
+        self._actions += [(f"scene:{sc.id}", f"Scene: {sc.name}") for sc in app.cfg.scenes]
+        self.action = ttk.Combobox(body, state="readonly", width=34, values=[label for _a, label in self._actions])
+        self.action.pack(anchor="w", pady=(4, 0))
+        current = schedule.action if schedule else "on"
+        index = next((i for i, (a, _l) in enumerate(self._actions) if a == current), 0)
+        self.action.current(index)
+
+        self.error = ttk.Label(body, text="", style="Muted.TLabel", foreground=ERROR)
+        self.error.pack(anchor="w", pady=(8, 0))
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="Save", style="Accent.TButton", command=self._save).pack(side="right")
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+
+    def _pick_days(self, days: list[int]) -> None:
+        for i, var in enumerate(self.day_vars):
+            var.set(i in days)
+
+    def _save(self) -> None:
+        try:
+            time = automation.normalise_time(f"{self.hour.get()}:{self.minute.get()}")
+        except ValueError as exc:
+            self.error.configure(text=str(exc))
+            return
+        days = [i for i, var in enumerate(self.day_vars) if var.get()]
+        if not days:
+            self.error.configure(text="Pick at least one day.")
+            return
+        action = self._actions[max(0, self.action.current())][0]
+        self.result = automation.Schedule(self._id, time, days, action, self._enabled)
+        self.destroy()
+
+
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent: "App", cfg: config_mod.Config, post: Post, tab: str = "bulb"):
         super().__init__(parent)
@@ -212,13 +294,16 @@ class SettingsDialog(tk.Toplevel):
         body.columnconfigure(1, weight=1)
         app_tab = ttk.Frame(notebook, padding=16)
         keys_tab = ttk.Frame(notebook, padding=16)
+        auto_tab = ttk.Frame(notebook, padding=16)
         notebook.add(body, text="Bulb")
         notebook.add(app_tab, text="App")
         notebook.add(keys_tab, text="Shortcuts")
+        notebook.add(auto_tab, text="Automation")
         self._capturing: str | None = None
         self._build_app_tab(app_tab)
         self._build_shortcuts_tab(keys_tab)
-        notebook.select({"app": app_tab, "shortcuts": keys_tab}.get(tab, body))
+        self._build_automation_tab(auto_tab)
+        notebook.select({"app": app_tab, "shortcuts": keys_tab, "automation": auto_tab}.get(tab, body))
 
         ttk.Label(body, text="Find your bulb automatically", style="Title.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w"
@@ -323,6 +408,77 @@ class SettingsDialog(tk.Toplevel):
         except OSError as exc:
             self.startup_var.set(startup.is_enabled())
             messagebox.showerror("Start with Windows", f"Could not change the setting: {exc}", parent=self)
+
+    # ---- Automation tab ---------------------------------------------------
+
+    def _build_automation_tab(self, tab: ttk.Frame) -> None:
+        def section(text: str) -> None:
+            ttk.Label(tab, text=text, style="Section.TLabel").pack(anchor="w", pady=(0, 4))
+
+        section("Follow the PC")
+        self.lock_off_var = tk.BooleanVar(value=self._app.cfg.lock_off)
+        self.unlock_on_var = tk.BooleanVar(value=self._app.cfg.unlock_on)
+        for text, var in (("Turn the light off when I lock the PC or it goes to sleep", self.lock_off_var),
+                          ("Turn it back on when I return (only if Mi Bulb turned it off)", self.unlock_on_var)):
+            box = ttk.Checkbutton(tab, text=text, variable=var, command=self._toggle_follow_pc)
+            box.pack(anchor="w")
+            if not pcevents.supported():
+                box.configure(state="disabled")
+
+        ttk.Label(tab, text="Schedule", style="Section.TLabel").pack(anchor="w", pady=(16, 4))
+        self.schedule_list = ttk.Frame(tab)
+        self.schedule_list.pack(fill="x")
+        row = ttk.Frame(tab)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Button(row, text="+ Add schedule", command=self._add_schedule).pack(side="left")
+        ttk.Label(tab, text="Schedules run while Mi Bulb is running (it can stay in the tray). "
+                            "A sunrise starts at the set time and reaches full brightness at the end.",
+                  style="Muted.TLabel", wraplength=420).pack(anchor="w", pady=(10, 0))
+        self._render_schedules()
+
+    def _toggle_follow_pc(self) -> None:
+        self._app.cfg.lock_off = self.lock_off_var.get()
+        self._app.cfg.unlock_on = self.unlock_on_var.get()
+        config_mod.save(self._app.cfg)
+
+    def _render_schedules(self) -> None:
+        for child in self.schedule_list.winfo_children():
+            child.destroy()
+        if not self._app.cfg.schedules:
+            ttk.Label(self.schedule_list, text="No schedules yet.", style="Muted.TLabel").pack(anchor="w")
+        for schedule in sorted(self._app.cfg.schedules, key=lambda sc: sc.time):
+            row = ttk.Frame(self.schedule_list)
+            row.pack(fill="x", pady=1)
+            var = tk.BooleanVar(value=schedule.enabled)
+            text = (f"{schedule.time}   {automation.describe_days(schedule.days)}   →   "
+                    f"{self._app.describe_action(schedule.action)}")
+            ttk.Checkbutton(row, text=text, variable=var,
+                            command=lambda sc=schedule, v=var: self._enable_schedule(sc, v.get())).pack(side="left")
+            ttk.Button(row, text="✕", width=3, command=lambda sc=schedule: self._delete_schedule(sc)).pack(side="right")
+            ttk.Button(row, text="Edit", command=lambda sc=schedule: self._edit_schedule(sc)).pack(side="right", padx=4)
+
+    def _enable_schedule(self, schedule: automation.Schedule, enabled: bool) -> None:
+        schedule.enabled = enabled
+        config_mod.save(self._app.cfg)
+
+    def _delete_schedule(self, schedule: automation.Schedule) -> None:
+        self._app.cfg.schedules = [sc for sc in self._app.cfg.schedules if sc.id != schedule.id]
+        config_mod.save(self._app.cfg)
+        self._render_schedules()
+
+    def _add_schedule(self) -> None:
+        self._edit_schedule(None)
+
+    def _edit_schedule(self, schedule: automation.Schedule | None) -> None:
+        dialog = ScheduleDialog(self, self._app, schedule)
+        self.wait_window(dialog)
+        self.grab_set()
+        if dialog.result is None:
+            return
+        others = [sc for sc in self._app.cfg.schedules if sc.id != dialog.result.id]
+        self._app.cfg.schedules = others + [dialog.result]
+        config_mod.save(self._app.cfg)
+        self._render_schedules()
 
     # ---- Shortcuts tab ----------------------------------------------------
 
@@ -589,12 +745,19 @@ class App(tk.Tk):
         self.shortcut_problems: dict[str, str] = {}
         self._updating = False
         self._settings_open = False
+        self._program: dict | None = None  # running sleep timer or sunrise
+        self._schedules_fired: set[tuple[str, str]] = set()
+        self._off_by_pc = False
+        self._last_pc_event = ("", 0.0)
+        self.pc_watcher = pcevents.PcEventWatcher(lambda event: self._ui_calls.put(lambda: self._on_pc_event(event)))
 
         self._build()
         self._apply_config()
         self._poll_ui_calls()
         self._start_tray()
         self.apply_shortcuts()
+        self.pc_watcher.start()
+        self._schedule_tick()
         try:
             startup.repair()
         except OSError:
@@ -651,6 +814,8 @@ class App(tk.Tk):
         self.title_label.pack(side="left")
         ttk.Button(header, text="⚙", width=3, command=self.open_settings).pack(side="right")
         ttk.Button(header, text="⟳", width=3, command=self.refresh).pack(side="right", padx=(0, 6))
+        self.timer_button = ttk.Button(header, text="⏾", width=3, command=self._timer_menu)
+        self.timer_button.pack(side="right", padx=(0, 6))
 
         self.power_button = ttk.Button(root, text="Power", style="Power.TButton", command=self.toggle)
         self.power_button.pack(fill="x", pady=(12, 12))
@@ -702,6 +867,9 @@ class App(tk.Tk):
         self.status_label.pack(fill="x", pady=(12, 0))
         # Shown only when a newer release exists
         self.update_label = ttk.Label(root, text="", style="Muted.TLabel", foreground=ACCENT, cursor="hand2")
+        # Shown while a sleep timer or sunrise runs; click to cancel
+        self.program_label = ttk.Label(root, text="", style="Muted.TLabel", foreground=ACCENT, cursor="hand2")
+        self.program_label.bind("<Button-1>", lambda _e: self.cancel_program())
 
         self.protocol("WM_DELETE_WINDOW", self.hide_or_quit)
         self.bind("<space>", lambda _e: self.toggle())
@@ -745,7 +913,10 @@ class App(tk.Tk):
             self.bulb = None
             self._set_status("Not configured – open settings (⚙) to add your bulb.")
 
-    def _run(self, key: str, func: Callable[[Bulb], Any], refresh: bool = False, retry: bool = True) -> None:
+    def _run(self, key: str, func: Callable[[Bulb], Any], refresh: bool = False, retry: bool = True,
+             manual: bool = True) -> None:
+        if manual and key != "status" and self._program is not None:
+            self.cancel_program(quiet=True)  # you took over, so stop the timer or sunrise
         bulb = self.bulb
         if bulb is None:
             self._set_status("Not configured – open settings (⚙) to add your bulb.", error=True)
@@ -753,7 +924,7 @@ class App(tk.Tk):
 
         def done(result: Any) -> None:
             if isinstance(result, DeviceUnreachable) and retry and self.cfg.did.isdigit():
-                self._relocate(lambda: self._run(key, func, refresh, retry=False), str(result))
+                self._relocate(lambda: self._run(key, func, refresh, retry=False, manual=False), str(result))
             elif isinstance(result, Exception):
                 self._set_status(str(result), error=True)
             elif isinstance(result, BulbState):
@@ -786,8 +957,8 @@ class App(tk.Tk):
     def toggle(self) -> None:
         self._run("power", lambda b: b.toggle(), refresh=True)
 
-    def turn(self, on: bool) -> None:
-        self._run("power", lambda b: b.turn_on() if on else b.turn_off(), refresh=True)
+    def turn(self, on: bool, manual: bool = True) -> None:
+        self._run("power", lambda b: b.turn_on() if on else b.turn_off(), refresh=True, manual=manual)
 
     def _on_brightness(self, value: int) -> None:
         self._run("brightness", lambda b: b.set_brightness(value))
@@ -998,6 +1169,11 @@ class App(tk.Tk):
             self.apply_scene_id(action.split(":", 1)[1])
         elif action == "window":
             self.show()
+        elif action == "sleep":
+            if self._program and self._program["name"] == "sleep":
+                self.cancel_program()
+            else:
+                self.start_sleep_timer(30)
 
     def _step_brightness(self, delta: int) -> None:
         # The slider holds the latest value, so quick repeated presses add up.
@@ -1110,6 +1286,12 @@ class App(tk.Tk):
             pystray.MenuItem("Scenes", pystray.Menu(lambda: (
                 pystray.MenuItem(scene.name, scene_action(scene.id)) for scene in self.cfg.scenes
             ))),
+            pystray.MenuItem("Sleep timer", pystray.Menu(
+                *[pystray.MenuItem(f"Off in {m} min", action(self.start_sleep_timer, m))
+                  for m in automation.SLEEP_TIMER_MINUTES],
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Cancel timer", lambda: post(self.cancel_program)),
+            )),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open window", lambda: post(self.show)),
             pystray.MenuItem("Settings…", lambda: post(lambda: self.open_settings("app"))),
@@ -1133,13 +1315,141 @@ class App(tk.Tk):
         else:
             self.quit_app()
 
+    # ---- automation: sleep timer, sunrise, schedules, follow the PC -----------
+
+    def _timer_menu(self) -> None:
+        menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+        for minutes in automation.SLEEP_TIMER_MINUTES:
+            menu.add_command(label=f"Sleep timer: off in {minutes} min",
+                             command=lambda m=minutes: self.start_sleep_timer(m))
+        menu.add_separator()
+        for minutes in automation.SUNRISE_MINUTES:
+            menu.add_command(label=f"Sunrise now ({minutes} min)", command=lambda m=minutes: self.start_sunrise(m))
+        if self._program is not None:
+            menu.add_separator()
+            menu.add_command(label="Cancel timer", command=self.cancel_program)
+        menu.add_separator()
+        menu.add_command(label="Schedules…", command=lambda: self.open_settings("automation"))
+        x = self.timer_button.winfo_rootx()
+        y = self.timer_button.winfo_rooty() + self.timer_button.winfo_height()
+        menu.tk_popup(x, y)
+
+    def start_sleep_timer(self, minutes: float) -> None:
+        start = self.bulb_state.brightness if self.bulb_state else self.brightness.get()
+        steps = automation.plan_sleep_timer(minutes, start)
+        self._start_program("sleep", f"Sleep timer: off at {{end}}", steps, finish=lambda: self.turn(False, manual=False))
+
+    def start_sunrise(self, minutes: float) -> None:
+        steps = automation.plan_sunrise(minutes)
+        self._start_program("sunrise", "Sunrise: full brightness at {end}", steps, finish=self.refresh)
+
+    def _start_program(self, name: str, label: str, steps: list, finish: Callable[[], None]) -> None:
+        self.cancel_program(quiet=True)
+        started = datetime.now()
+        end = datetime.fromtimestamp(started.timestamp() + steps[-1].at)
+        self._program = {"name": name, "steps": steps, "index": 0, "start": started.timestamp(),
+                         "finish": finish, "after": None, "label": label.format(end=end.strftime("%H:%M"))}
+        self.program_label.configure(text=f"{self._program['label']}  ·  click to cancel")
+        self.program_label.pack(fill="x", pady=(4, 0))
+        self._program_step()
+
+    def _program_step(self) -> None:
+        program = self._program
+        if program is None:
+            return
+        step = program["steps"][program["index"]]
+        first = program["index"] == 0
+        if step.kelvin is not None:
+            self._run("program", lambda b: b.apply_scene(step.brightness, kelvin=step.kelvin), manual=False)
+        elif first:
+            pass  # a sleep timer starts from the current brightness
+        else:
+            self._run("program", lambda b: b.set_brightness(step.brightness), manual=False)
+        self._sync_slider(self.brightness_label, step.brightness)
+        if step.kelvin is not None:
+            self._sync_slider(self.kelvin_label, step.kelvin)
+
+        program["index"] += 1
+        if program["index"] >= len(program["steps"]):
+            finish = program["finish"]
+            self._program = None
+            self.program_label.pack_forget()
+            finish()
+            return
+        wait = program["start"] + program["steps"][program["index"]].at - datetime.now().timestamp()
+        program["after"] = self.after(max(0, int(wait * 1000)), self._program_step)
+
+    def cancel_program(self, quiet: bool = False) -> None:
+        program = self._program
+        if program is None:
+            return
+        self._program = None
+        if program["after"] is not None:
+            self.after_cancel(program["after"])
+        self.program_label.pack_forget()
+        if not quiet:
+            self._set_status("Timer cancelled.")
+
+    def _schedule_tick(self) -> None:
+        now = datetime.now()
+        minute = now.strftime("%Y-%m-%d %H:%M")
+        for schedule in self.cfg.schedules:
+            key = (schedule.id, minute)
+            if schedule.due(now) and key not in self._schedules_fired:
+                self._schedules_fired.add(key)
+                self.run_schedule_action(schedule.action)
+        # Forget old entries so the set stays small.
+        self._schedules_fired = {k for k in self._schedules_fired if k[1] == minute}
+        self._tick_id = self.after(15000, self._schedule_tick)
+
+    def run_schedule_action(self, action: str) -> None:
+        minutes = automation.sunrise_minutes(action)
+        if minutes is not None:
+            self.start_sunrise(minutes)
+        elif action in ("on", "off"):
+            self.turn(action == "on")
+        elif action.startswith("scene:"):
+            self.apply_scene_id(action.split(":", 1)[1])
+
+    def describe_action(self, action: str) -> str:
+        minutes = automation.sunrise_minutes(action)
+        if minutes is not None:
+            return f"Sunrise wake-up ({minutes} min)"
+        if action == "on":
+            return "Turn on"
+        if action == "off":
+            return "Turn off"
+        if action.startswith("scene:"):
+            scene = next((sc for sc in self.cfg.scenes if sc.id == action[6:]), None)
+            return f"Scene: {scene.name}" if scene else "Scene (deleted)"
+        return action
+
+    def _on_pc_event(self, event: str) -> None:
+        # Resume often arrives twice (automatic + user); ignore repeats within 10 s.
+        now = datetime.now().timestamp()
+        if self._last_pc_event[0] == event and now - self._last_pc_event[1] < 10:
+            return
+        self._last_pc_event = (event, now)
+        if event in ("lock", "suspend") and self.cfg.lock_off:
+            if self.bulb_state is None or self.bulb_state.on:
+                self._off_by_pc = True
+                self.cancel_program(quiet=True)
+                self.turn(False)
+        elif event in ("unlock", "resume") and self.cfg.unlock_on and self._off_by_pc:
+            self._off_by_pc = False
+            # After sleep the network needs a moment to come back.
+            self.after(4000 if event == "resume" else 0, lambda: self.turn(True))
+
     def _tray_brightness(self, percent: int) -> None:
         self._sync_slider(self.brightness_label, percent)
         self._run("brightness", lambda b: b.set_brightness(percent), refresh=True)
 
     def quit_app(self) -> None:
         self.after_cancel(self._poll_id)
+        self.after_cancel(self._tick_id)
+        self.cancel_program(quiet=True)
         self.hotkeys.stop()
+        self.pc_watcher.stop()
         if self.tray is not None:
             self.tray.stop()
         self.destroy()
