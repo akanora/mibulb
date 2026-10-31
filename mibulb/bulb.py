@@ -14,8 +14,9 @@ By default the bulb is probed once to see which one it speaks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Callable
 
-from .miio import Device, DeviceUnreachable, MiIOError
+from .miio import Device, DeviceUnreachable, MiIOError, find_ip
 
 LIGHT_SIID = 2
 
@@ -231,6 +232,89 @@ class Bulb:
             else:
                 values["color_temperature"] = kelvin
             self._miot_set(**values)
+
+
+class BulbGroup:
+    """Sends each command to one or more bulbs, with the same methods as Bulb.
+
+    If a bulb stops answering and has a device id, it is looked for on the
+    network in case the router gave it a new IP; on_moved(member) is then
+    called so the new IP can be saved.
+    """
+
+    def __init__(self, members: list, on_moved: Callable[[Any], None] | None = None):
+        # members: objects with .name, .ip, .token, .did and .properties (config.BulbInfo)
+        self.members = [(info, Bulb(info.ip, info.token, properties=info.properties)) for info in members]
+        self.on_moved = on_moved
+
+    @property
+    def names(self) -> list[str]:
+        return [info.name for info, _bulb in self.members]
+
+    def _with_relocate(self, info: Any, bulb: Bulb, func: Callable[[Bulb], Any]) -> Any:
+        try:
+            return func(bulb)
+        except DeviceUnreachable:
+            if not str(info.did).isdigit():
+                raise
+            ip = find_ip(int(info.did))
+            if not ip or ip == bulb.device.ip:
+                raise
+            info.ip = bulb.device.ip = ip
+            if self.on_moved is not None:
+                self.on_moved(info)
+            return func(bulb)
+
+    def _each(self, func: Callable[[Bulb], Any]) -> list:
+        results, failed = [], []
+        for info, bulb in self.members:
+            try:
+                results.append(self._with_relocate(info, bulb, func))
+            except MiIOError as exc:
+                failed.append((info, exc))
+        if failed:
+            if len(self.members) == 1:
+                raise failed[0][1]
+            names = ", ".join(info.name for info, _exc in failed)
+            raise MiIOError(f"{names} didn't respond ({failed[0][1]})")
+        return results
+
+    def status(self) -> BulbState:
+        """The state of the first bulb that answers."""
+        first_error: MiIOError | None = None
+        for info, bulb in self.members:
+            try:
+                return self._with_relocate(info, bulb, lambda b: b.status())
+            except MiIOError as exc:
+                first_error = first_error or exc
+        raise first_error or MiIOError("No bulbs")
+
+    def set_power(self, on: bool) -> None:
+        self._each(lambda b: b.set_power(on))
+
+    def turn_on(self) -> None:
+        self.set_power(True)
+
+    def turn_off(self) -> None:
+        self.set_power(False)
+
+    def toggle(self) -> bool:
+        # Base it on one bulb so a group always ends up all on or all off.
+        new_state = not self.status().on
+        self.set_power(new_state)
+        return new_state
+
+    def set_brightness(self, percent: int) -> None:
+        self._each(lambda b: b.set_brightness(percent))
+
+    def set_color_temperature(self, kelvin: int) -> None:
+        self._each(lambda b: b.set_color_temperature(kelvin))
+
+    def set_color(self, rgb: int) -> None:
+        self._each(lambda b: b.set_color(rgb))
+
+    def apply_scene(self, brightness: int, kelvin: int | None = None, rgb: int | None = None) -> None:
+        self._each(lambda b: b.apply_scene(brightness, kelvin=kelvin, rgb=rgb))
 
 
 def parse_color(text: str) -> int:

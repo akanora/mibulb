@@ -107,16 +107,18 @@ class DownloadTest(unittest.TestCase):
 
 class ForgetBulbTest(unittest.TestCase):
     def test_keeps_preferences_only(self):
-        cfg = config.Config(ip="1.2.3.4", token="a" * 32, name="Desk", did="5", hotkey=False, check_updates=False)
-        forgotten = config.forget_bulb(cfg)
-        self.assertEqual((forgotten.ip, forgotten.token, forgotten.did, forgotten.name), ("", "", "", "Light"))
+        cfg = config.Config(bulbs=[config.BulbInfo("a", "Desk", "1.2.3.4", "a" * 32, "5")], selected="a",
+                            hotkey=False, check_updates=False)
+        forgotten = config.forget_bulbs(cfg)
+        self.assertEqual((forgotten.bulbs, forgotten.selected), ([], ""))
+        self.assertEqual(len(cfg.bulbs), 1)  # the original is untouched
         self.assertFalse(forgotten.hotkey)
         self.assertFalse(forgotten.check_updates)
         self.assertFalse(forgotten.is_complete)
 
     def test_preferences_round_trip(self):
         path = Path(tempfile.mkdtemp()) / "config.json"
-        config.save(config.Config(ip="1.2.3.4", token="a" * 32, hotkey=False), path)
+        config.save(config.Config(bulbs=[config.BulbInfo("a", ip="1.2.3.4", token="a" * 32)], hotkey=False), path)
         loaded = config.load(path)
         self.assertFalse(loaded.hotkey)
         self.assertTrue(loaded.check_updates)
@@ -232,9 +234,9 @@ class ShortcutConfigTest(unittest.TestCase):
         self.assertNotIn("bogus", shortcuts)
 
     def test_forget_bulb_keeps_shortcuts(self):
-        cfg = config.Config(ip="1.2.3.4", token="a" * 32)
+        cfg = config.Config(bulbs=[config.BulbInfo("a", ip="1.2.3.4", token="a" * 32)])
         cfg.shortcuts["on"] = "Ctrl+Alt+O"
-        self.assertEqual(config.forget_bulb(cfg).shortcuts["on"], "Ctrl+Alt+O")
+        self.assertEqual(config.forget_bulbs(cfg).shortcuts["on"], "Ctrl+Alt+O")
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows only")

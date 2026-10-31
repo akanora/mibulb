@@ -7,7 +7,7 @@ import sys
 
 from . import __version__
 from . import config as config_mod
-from .bulb import Bulb, parse_color
+from .bulb import Bulb, BulbGroup, parse_color
 from .cloud import CloudError, QrLogin, XiaomiCloud
 from .miio import MiIOError, discover
 
@@ -26,23 +26,38 @@ def _login() -> None:
         raise SystemExit("No devices found on this Xiaomi account.")
     for number, device in enumerate(devices, 1):
         print(f"  {number}. {device.label}")
-    choice = input("Which one is your bulb? [1]: ").strip() or "1"
-    device = devices[int(choice) - 1]
+    choice = input("Which ones are your bulbs? Numbers separated by commas [1]: ").strip() or "1"
     cfg = config_mod.load()
-    cfg.name, cfg.ip, cfg.token, cfg.did = device.name, device.ip, device.token, device.did
-    print(f"Saved {device.name} to {config_mod.save(cfg)}")
+    for number in choice.replace(" ", "").split(","):
+        device = devices[int(number) - 1]
+        existing = next((b for b in cfg.bulbs if b.did and b.did == device.did), None)
+        if existing is None:
+            existing = config_mod.BulbInfo(config_mod.new_bulb_id(), device.name)
+            cfg.bulbs.append(existing)
+        existing.ip, existing.token, existing.did = device.ip or existing.ip, device.token, device.did
+        print(f"Saved {device.name}")
+    print(f"Settings are in {config_mod.save(cfg)}")
 
 
-def _bulb(args: argparse.Namespace) -> Bulb:
+def _bulb(args: argparse.Namespace) -> Bulb | BulbGroup:
+    if args.ip or args.token:
+        if not (args.ip and args.token):
+            raise SystemExit("Pass both --ip and --token.")
+        return Bulb(args.ip, args.token)
     cfg = config_mod.load()
-    ip = args.ip or cfg.ip
-    token = args.token or cfg.token
-    if not ip or not token:
-        raise SystemExit(
-            f"No bulb configured. Create {config_mod.find_config_path()} (see config.example.json) "
-            "or pass --ip and --token."
-        )
-    return Bulb(ip, token, properties=cfg.properties)
+    if args.bulb:
+        wanted = args.bulb.lower()
+        if wanted == config_mod.ALL:
+            cfg.selected = config_mod.ALL
+        else:
+            match = [b for b in cfg.usable_bulbs if b.name.lower() == wanted or b.id == args.bulb]
+            if not match:
+                names = ", ".join(b.name for b in cfg.usable_bulbs) or "none"
+                raise SystemExit(f"No bulb called {args.bulb!r}. Your bulbs: {names}")
+            cfg.selected = match[0].id
+    if not cfg.is_complete:
+        raise SystemExit(f"No bulb configured. Run 'mibulb login', or pass --ip and --token.")
+    return BulbGroup(cfg.current_bulbs)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -50,6 +65,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--ip", help="bulb IP address (overrides config.json)")
     parser.add_argument("--token", help="32-character device token (overrides config.json)")
+    parser.add_argument("--bulb", help="which bulb to control: its name, or 'all' (default: the one picked in the app)")
     parser.add_argument("--minimized", action="store_true", help="start the window hidden in the system tray")
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -59,7 +75,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("toggle", help="toggle the light")
     sub.add_parser("status", help="show the current state")
     sub.add_parser("discover", help="find miIO devices on the network")
-    sub.add_parser("login", help="sign in to your Xiaomi account and pick a bulb (saves config.json)")
+    sub.add_parser("login", help="sign in to your Xiaomi account and add bulbs")
     p = sub.add_parser("brightness", help="set brightness (1-100)")
     p.add_argument("percent", type=int)
     p = sub.add_parser("temp", help="set white colour temperature (1700-6500 K)")

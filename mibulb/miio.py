@@ -180,7 +180,9 @@ class Device:
                         reply = parse_packet(self.token, data)
                         if reply.get("id") == request_id:
                             break
-            except socket.timeout as exc:
+            except (socket.timeout, ConnectionResetError, ConnectionRefusedError) as exc:
+                # Windows reports "connection reset" when nothing listens at that address, e.g. the
+                # router gave the bulb's old IP to another device. Treat it like no answer.
                 last_error = DeviceUnreachable(f"No response from {self.ip} (is it on and on the same network?)")
                 last_error.__cause__ = exc
                 continue

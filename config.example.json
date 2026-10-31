@@ -1,5 +1,17 @@
 {
-  "name": "Bedroom light",
-  "ip": "192.168.1.50",
-  "token": "0123456789abcdef0123456789abcdef"
+  "bulbs": [
+    {
+      "id": "desk",
+      "name": "Desk lamp",
+      "ip": "192.168.1.50",
+      "token": "0123456789abcdef0123456789abcdef"
+    },
+    {
+      "id": "bed",
+      "name": "Bedroom",
+      "ip": "192.168.1.51",
+      "token": "fedcba9876543210fedcba9876543210"
+    }
+  ],
+  "selected": "all"
 }

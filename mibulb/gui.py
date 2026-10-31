@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -15,10 +16,10 @@ from typing import Any, Callable
 
 from . import __version__, automation, hotkey, pcevents, startup, updates
 from . import config as config_mod
-from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbState
+from .bulb import MAX_KELVIN, MIN_KELVIN, MODE_COLOR, Bulb, BulbGroup, BulbState
 from .cloud import Cancelled, CloudDevice, QrLogin, XiaomiCloud
 from .scenes import Scene
-from .miio import DeviceUnreachable, MiIOError, discover, find_ip
+from .miio import MiIOError, discover, find_ip
 
 try:
     from PIL import Image, ImageDraw, ImageTk
@@ -193,6 +194,122 @@ class QrLoginDialog(tk.Toplevel):
         self.destroy()
 
 
+def work_area() -> tuple[int, int, int, int]:
+    """The desktop minus the taskbar (left, top, right, bottom) on the main screen."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return rect.left, rect.top, rect.right, rect.bottom
+    return 0, 0, 1280, 720
+
+
+class QuickPanel(tk.Toplevel):
+    """A small pop-up above the tray icon, like the Windows volume flyout."""
+
+    WIDTH = 300
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self._app = app
+        self._syncing = False
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg="#3a3d46")  # 1 px border around the panel
+
+        body = tk.Frame(self, bg=BG, padx=14, pady=12)
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+
+        top = tk.Frame(body, bg=BG)
+        top.pack(fill="x")
+        tk.Label(top, text=app.cfg.display_name, bg=BG, fg=TEXT, font=("Segoe UI Semibold", 11)).pack(side="left")
+        self.power = ttk.Button(top, text="Power", width=6, command=app.toggle)
+        self.power.pack(side="right")
+
+        self.brightness = self._scale(body, "Brightness", 1, 100, lambda v: app._quick_brightness(v))
+        self.kelvin = self._scale(body, "White", MIN_KELVIN, MAX_KELVIN, lambda v: app._quick_kelvin(v))
+
+        swatches = tk.Frame(body, bg=BG)
+        swatches.pack(fill="x", pady=(10, 0))
+        for color in PRESET_COLORS:
+            swatch = tk.Label(swatches, bg=color, width=2, height=1, cursor="hand2")
+            swatch.pack(side="left", expand=True, padx=1)
+            swatch.bind("<Button-1>", lambda _e, c=color: app._set_color(c))
+
+        if app.cfg.scenes:
+            scenes = tk.Frame(body, bg=BG)
+            scenes.pack(fill="x", pady=(10, 0))
+            for column in range(3):
+                scenes.columnconfigure(column, weight=1, uniform="scene")
+            for index, scene in enumerate(app.cfg.scenes[:6]):
+                chip = tk.Label(scenes, text=scene.name, bg=PANEL, fg=TEXT, font=("Segoe UI", 9), pady=4,
+                                cursor="hand2", highlightthickness=0)
+                chip.grid(row=index // 3, column=index % 3, sticky="we", padx=1, pady=1)
+                chip.bind("<Button-1>", lambda _e, sc=scene: app.apply_scene(sc))
+                chip.bind("<Enter>", lambda _e, c=chip: c.configure(bg="#474a55"))
+                chip.bind("<Leave>", lambda _e, c=chip: c.configure(bg=PANEL))
+
+        footer = tk.Frame(body, bg=BG)
+        footer.pack(fill="x", pady=(10, 0))
+        link = tk.Label(footer, text="Open Mi Bulb", bg=BG, fg=MUTED, font=("Segoe UI", 9), cursor="hand2")
+        link.pack(side="left")
+        link.bind("<Button-1>", lambda _e: (self.close(), app.show()))
+        timer = tk.Label(footer, text="⏾ Sleep 30 min", bg=BG, fg=MUTED, font=("Segoe UI", 9), cursor="hand2")
+        timer.pack(side="right")
+        timer.bind("<Button-1>", lambda _e: app.start_sleep_timer(30))
+
+        self.bind("<Escape>", lambda _e: self.close())
+        self.bind("<FocusOut>", lambda _e: self.after(150, self._close_if_unfocused))
+        if app.bulb_state is not None:
+            self.show_state(app.bulb_state)
+        self._place()
+        self.after(10, self.focus_force)
+
+    def _scale(self, parent: tk.Misc, title: str, lo: int, hi: int, on_change: Callable[[int], None]) -> ttk.Scale:
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=(10, 0))
+        tk.Label(row, text=title, bg=BG, fg=MUTED, font=("Segoe UI", 9), width=10, anchor="w").pack(side="left")
+
+        def changed(raw: str) -> None:
+            if not self._syncing:
+                on_change(int(float(raw)))
+
+        scale = ttk.Scale(row, from_=lo, to=hi, orient="horizontal", command=changed)
+        scale.pack(side="left", fill="x", expand=True)
+        return scale
+
+    def show_state(self, state: BulbState) -> None:
+        self._syncing = True
+        try:
+            self.power.configure(text="On" if state.on else "Off",
+                                 style="Accent.TButton" if state.on else "TButton")
+            self.brightness.set(state.brightness)
+            self.kelvin.set(state.color_temperature)
+        finally:
+            self._syncing = False
+
+    def _place(self) -> None:
+        self.update_idletasks()
+        left, top, right, bottom = work_area()
+        height = self.winfo_reqheight()
+        self.geometry(f"{self.WIDTH}x{height}+{right - self.WIDTH - 12}+{bottom - height - 12}")
+
+    def _close_if_unfocused(self) -> None:
+        if not self.winfo_exists():
+            return
+        focused = self.focus_get()
+        if focused is None or not str(focused).startswith(str(self)):
+            self.close()
+
+    def close(self) -> None:
+        if self.winfo_exists():
+            self.destroy()
+        if self._app.quick_panel is self:
+            self._app.quick_panel = None
+
+
 class ScheduleDialog(tk.Toplevel):
     """Add or edit one schedule: a time, weekdays and an action."""
 
@@ -281,21 +398,20 @@ class SettingsDialog(tk.Toplevel):
         self.configure(bg=BG)
         self.resizable(False, False)
         self.transient(parent)
-        self.result: config_mod.Config | None = None
-        self._cfg = cfg
+        self.changed = False
         self._post = post
-        self._did = cfg.did
+        self._did = ""
+        self._editing: str | None = None  # id of the bulb shown in the detail fields
         self._cloud_devices: list[CloudDevice] = []
         self._app = parent
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=(8, 0))
         body = ttk.Frame(notebook, padding=16)
-        body.columnconfigure(1, weight=1)
         app_tab = ttk.Frame(notebook, padding=16)
         keys_tab = ttk.Frame(notebook, padding=16)
         auto_tab = ttk.Frame(notebook, padding=16)
-        notebook.add(body, text="Bulb")
+        notebook.add(body, text="Bulbs")
         notebook.add(app_tab, text="App")
         notebook.add(keys_tab, text="Shortcuts")
         notebook.add(auto_tab, text="Automation")
@@ -305,48 +421,7 @@ class SettingsDialog(tk.Toplevel):
         self._build_automation_tab(auto_tab)
         notebook.select({"app": app_tab, "shortcuts": keys_tab, "automation": auto_tab}.get(tab, body))
 
-        ttk.Label(body, text="Find your bulb automatically", style="Title.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w"
-        )
-        ttk.Label(
-            body,
-            text="Sign in by scanning a QR code with the Xiaomi Home app. Your bulbs and their tokens are filled in for you.",
-            style="Muted.TLabel",
-            wraplength=380,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
-        ttk.Button(body, text="Sign in with Xiaomi", style="Accent.TButton", command=self._cloud_login).grid(
-            row=2, column=0, sticky="w"
-        )
-        self.cloud_pick = ttk.Combobox(body, state="readonly", width=40)
-        self.cloud_pick.grid(row=2, column=1, sticky="we", padx=(8, 0))
-        self.cloud_pick.bind("<<ComboboxSelected>>", self._pick_cloud)
-        self.cloud_pick.set("No devices yet")
-
-        ttk.Separator(body).grid(row=3, column=0, columnspan=2, sticky="we", pady=14)
-        ttk.Label(body, text="Or enter it manually", style="Muted.TLabel").grid(row=4, column=0, columnspan=2, sticky="w")
-
-        self.name_var = tk.StringVar(value=cfg.name)
-        self.ip_var = tk.StringVar(value=cfg.ip)
-        self.token_var = tk.StringVar(value=cfg.token)
-
-        for row, (label, var, show) in enumerate(
-            [("Name", self.name_var, ""), ("IP address", self.ip_var, ""), ("Token", self.token_var, "•")], start=5
-        ):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            entry = ttk.Entry(body, textvariable=var, width=40, show=show)
-            entry.grid(row=row, column=1, sticky="we", pady=4, padx=(8, 0))
-        self.token_entry = entry
-
-        self.show_token = tk.BooleanVar(value=False)
-        ttk.Checkbutton(body, text="Show token", variable=self.show_token, command=self._toggle_token).grid(
-            row=8, column=1, sticky="w", padx=(8, 0)
-        )
-
-        self.scan_button = ttk.Button(body, text="Scan network", command=self._scan)
-        self.scan_button.grid(row=9, column=0, sticky="w", pady=4)
-        self.found = ttk.Combobox(body, state="readonly", width=40)
-        self.found.grid(row=9, column=1, sticky="we", pady=4, padx=(8, 0))
-        self.found.bind("<<ComboboxSelected>>", self._pick_found)
+        self._build_bulbs_tab(body)
 
         buttons = ttk.Frame(self, padding=(16, 12, 16, 16))
         buttons.pack(fill="x")
@@ -363,6 +438,120 @@ class SettingsDialog(tk.Toplevel):
     def _toggle_token(self) -> None:
         self.token_entry.configure(show="" if self.show_token.get() else "•")
 
+    # ---- Bulbs tab ----------------------------------------------------------
+
+    def _build_bulbs_tab(self, body: ttk.Frame) -> None:
+        cfg = self._app.cfg
+        body.columnconfigure(1, weight=1)
+        ttk.Label(body, text="Your bulbs", style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        listing = ttk.Frame(body)
+        listing.grid(row=1, column=0, columnspan=2, sticky="we", pady=(6, 0))
+        self.bulb_list = tk.Listbox(listing, height=4, bg=PANEL, fg=TEXT, selectbackground=ACCENT,
+                                    selectforeground=BG, highlightthickness=0, borderwidth=0, activestyle="none",
+                                    font=("Segoe UI", 10), exportselection=False)
+        self.bulb_list.pack(side="left", fill="both", expand=True)
+        self.bulb_list.bind("<<ListboxSelect>>", self._pick_bulb)
+        side = ttk.Frame(listing)
+        side.pack(side="left", fill="y", padx=(8, 0))
+        ttk.Button(side, text="New", command=self._new_bulb).pack(fill="x")
+        ttk.Button(side, text="Remove", command=self._remove_bulb).pack(fill="x", pady=(4, 0))
+
+        ttk.Separator(body).grid(row=2, column=0, columnspan=2, sticky="we", pady=12)
+        ttk.Label(body, text="Find bulbs automatically", style="Section.TLabel").grid(
+            row=3, column=0, columnspan=2, sticky="w")
+        ttk.Label(body, text="Sign in by scanning a QR code with the Xiaomi Home app. "
+                             "Your bulbs and their tokens are filled in for you.",
+                  style="Muted.TLabel", wraplength=400).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        ttk.Button(body, text="Sign in with Xiaomi", style="Accent.TButton", command=self._cloud_login).grid(
+            row=5, column=0, sticky="w")
+        self.cloud_pick = ttk.Combobox(body, state="readonly", width=40)
+        self.cloud_pick.grid(row=5, column=1, sticky="we", padx=(8, 0))
+        self.cloud_pick.bind("<<ComboboxSelected>>", self._pick_cloud)
+        self.cloud_pick.set("No devices yet")
+        self.add_all_button = ttk.Button(body, text="Add all lights from my account", command=self._add_all_cloud,
+                                         state="disabled")
+        self.add_all_button.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        ttk.Separator(body).grid(row=7, column=0, columnspan=2, sticky="we", pady=12)
+        ttk.Label(body, text="Bulb details (or enter them yourself)", style="Section.TLabel").grid(
+            row=8, column=0, columnspan=2, sticky="w")
+        self.name_var = tk.StringVar()
+        self.ip_var = tk.StringVar()
+        self.token_var = tk.StringVar()
+        for row, (label, var, show) in enumerate(
+            [("Name", self.name_var, ""), ("IP address", self.ip_var, ""), ("Token", self.token_var, "•")], start=9
+        ):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            entry = ttk.Entry(body, textvariable=var, width=40, show=show)
+            entry.grid(row=row, column=1, sticky="we", pady=4, padx=(8, 0))
+        self.token_entry = entry
+        self.show_token = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, text="Show token", variable=self.show_token, command=self._toggle_token).grid(
+            row=12, column=1, sticky="w", padx=(8, 0))
+        self.scan_button = ttk.Button(body, text="Scan network", command=self._scan)
+        self.scan_button.grid(row=13, column=0, sticky="w", pady=4)
+        self.found = ttk.Combobox(body, state="readonly", width=40)
+        self.found.grid(row=13, column=1, sticky="we", pady=4, padx=(8, 0))
+        self.found.bind("<<ComboboxSelected>>", self._pick_found)
+        self.saved_label = ttk.Label(body, text="", style="Muted.TLabel")
+        self.saved_label.grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        current = cfg.current_bulbs or cfg.bulbs
+        self._editing = current[0].id if current else None
+        self._refresh_bulb_list()
+        self._load_bulb(cfg.bulb(self._editing) if self._editing else None)
+
+    def _refresh_bulb_list(self) -> None:
+        self.bulb_list.delete(0, "end")
+        for index, info in enumerate(self._app.cfg.bulbs):
+            self.bulb_list.insert("end", f"  {info.name}    {info.ip or 'no IP yet'}")
+            if info.id == self._editing:
+                self.bulb_list.selection_set(index)
+        if not self._app.cfg.bulbs:
+            self.bulb_list.insert("end", "  No bulbs yet: sign in with Xiaomi below")
+
+    def _load_bulb(self, info: config_mod.BulbInfo | None) -> None:
+        self.name_var.set(info.name if info else "")
+        self.ip_var.set(info.ip if info else "")
+        self.token_var.set(info.token if info else "")
+        self._did = info.did if info else ""
+        self.saved_label.configure(text="")
+
+    def _pick_bulb(self, _event: object = None) -> None:
+        selection = self.bulb_list.curselection()
+        if not selection or selection[0] >= len(self._app.cfg.bulbs):
+            return
+        info = self._app.cfg.bulbs[selection[0]]
+        self._editing = info.id
+        self._load_bulb(info)
+
+    def _new_bulb(self) -> None:
+        self._editing = None
+        self.bulb_list.selection_clear(0, "end")
+        self._load_bulb(None)
+        self.saved_label.configure(text="Fill in the details below, or sign in with Xiaomi, then click Save bulb.")
+
+    def _remove_bulb(self) -> None:
+        selection = self.bulb_list.curselection()
+        cfg = self._app.cfg
+        if not selection or selection[0] >= len(cfg.bulbs):
+            return
+        info = cfg.bulbs[selection[0]]
+        if not messagebox.askyesno("Remove bulb", f"Remove {info.name} from Mi Bulb?", parent=self):
+            return
+        cfg.bulbs.remove(info)
+        if cfg.selected == info.id:
+            cfg.selected = ""
+        self._bulbs_changed()
+        self._editing = cfg.bulbs[0].id if cfg.bulbs else None
+        self._refresh_bulb_list()
+        self._load_bulb(cfg.bulb(self._editing) if self._editing else None)
+
+    def _bulbs_changed(self) -> None:
+        self.changed = True
+        config_mod.save(self._app.cfg)
+        self._app._apply_config()
+
     # ---- App tab ----------------------------------------------------------
 
     def _build_app_tab(self, tab: ttk.Frame) -> None:
@@ -378,6 +567,12 @@ class SettingsDialog(tk.Toplevel):
         box.pack(anchor="w")
         if not startup.supported():
             box.configure(state="disabled")
+
+        section("Tray icon")
+        self.tray_click_var = tk.StringVar(value=self._app.cfg.tray_click)
+        for value, text in (("panel", "Left-click opens the quick panel"), ("toggle", "Left-click toggles the light")):
+            ttk.Radiobutton(tab, text=text, value=value, variable=self.tray_click_var,
+                            command=self._set_tray_click).pack(anchor="w")
 
         section("Updates")
         self.updates_var = tk.BooleanVar(value=self._app.cfg.check_updates)
@@ -397,7 +592,7 @@ class SettingsDialog(tk.Toplevel):
         row = ttk.Frame(tab)
         row.pack(fill="x", pady=(6, 0))
         ttk.Button(row, text="Open folder", command=self._open_data_folder).pack(side="left")
-        ttk.Button(row, text="Forget this bulb", command=self._forget).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Forget all bulbs", command=self._forget).pack(side="left", padx=(8, 0))
 
     def _toggle_startup(self) -> None:
         try:
@@ -589,6 +784,10 @@ class SettingsDialog(tk.Toplevel):
             self._app.apply_shortcuts()
         super().destroy()
 
+    def _set_tray_click(self) -> None:
+        self._app.cfg.tray_click = self.tray_click_var.get()
+        config_mod.save(self._app.cfg)
+
     def _toggle_updates(self) -> None:
         self._app.cfg.check_updates = self.updates_var.get()
         config_mod.save(self._app.cfg)
@@ -632,18 +831,17 @@ class SettingsDialog(tk.Toplevel):
 
     def _forget(self) -> None:
         if not messagebox.askyesno(
-            "Forget this bulb",
-            "Remove the bulb's name, IP address and token from this PC?\n\n"
-            "You can add it again any time with 'Sign in with Xiaomi'.",
+            "Forget all bulbs",
+            "Remove every bulb's name, IP address and token from this PC?\n\n"
+            "You can add them again any time with 'Sign in with Xiaomi'.",
             parent=self,
         ):
             return
-        self._app.forget_bulb()
-        self._cfg = self._app.cfg
-        self.ip_var.set("")
-        self.token_var.set("")
-        self.name_var.set(self._cfg.name)
-        self._did = ""
+        self._app.forget_bulbs()
+        self.changed = True
+        self._editing = None
+        self._refresh_bulb_list()
+        self._load_bulb(None)
 
     # ---- Xiaomi account -------------------------------------------------
 
@@ -663,12 +861,21 @@ class SettingsDialog(tk.Toplevel):
         self.cloud_pick.configure(values=[d.label for d in self._cloud_devices])
         self.cloud_pick.current(0)
         self._pick_cloud()
+        self.add_all_button.configure(state="normal" if lights else "disabled",
+                                      text=f"Add all {len(lights)} lights from my account" if len(lights) > 1
+                                      else "Add all lights from my account")
 
     def _pick_cloud(self, _event: object = None) -> None:
         index = self.cloud_pick.current()
         if index < 0:
             return
         device = self._cloud_devices[index]
+        # Already added? Then this updates that bulb instead of adding it twice.
+        existing = next((b for b in self._app.cfg.bulbs if b.did and b.did == device.did), None)
+        self._editing = existing.id if existing else None
+        self._refresh_bulb_list()
+        if existing is None:
+            self.bulb_list.selection_clear(0, "end")
         self.name_var.set(device.name)
         self.ip_var.set(device.ip)
         self.token_var.set(device.token)
@@ -681,6 +888,39 @@ class SettingsDialog(tk.Toplevel):
     def _found_ip(self, ip: Any) -> None:
         if self.winfo_exists() and isinstance(ip, str) and not self.ip_var.get():
             self.ip_var.set(ip)
+
+    def _add_all_cloud(self) -> None:
+        cfg = self._app.cfg
+        added = 0
+        for device in self._cloud_devices:
+            if not device.is_light:
+                continue
+            existing = next((b for b in cfg.bulbs if b.did and b.did == device.did), None)
+            if existing is not None:
+                existing.token = device.token
+                existing.ip = device.ip or existing.ip
+                info = existing
+            else:
+                info = config_mod.BulbInfo(config_mod.new_bulb_id(), device.name, device.ip, device.token, device.did)
+                cfg.bulbs.append(info)
+                added += 1
+            if not info.ip and info.did.isdigit():
+                run_in_thread(self._post, lambda d=int(info.did): find_ip(d),
+                              lambda ip, i=info: self._fill_ip(i, ip))
+        if len(cfg.usable_bulbs) > 1 and not cfg.selected:
+            cfg.selected = config_mod.ALL
+        self._bulbs_changed()
+        self._editing = cfg.bulbs[0].id if cfg.bulbs else None
+        self._refresh_bulb_list()
+        self.saved_label.configure(text=f"Added {added} new light(s). Pick one or All lights from the name "
+                                        "at the top of the main window.")
+
+    def _fill_ip(self, info: config_mod.BulbInfo, ip: Any) -> None:
+        if isinstance(ip, str) and not info.ip:
+            info.ip = ip
+            self._bulbs_changed()
+            if self.winfo_exists():
+                self._refresh_bulb_list()
 
     # ---- local network --------------------------------------------------
 
@@ -707,23 +947,25 @@ class SettingsDialog(tk.Toplevel):
     def _save(self) -> None:
         ip = self.ip_var.get().strip()
         token = self.token_var.get().strip()
-        if not ip and not token:
-            self.destroy()  # nothing to save, e.g. after "Forget this bulb"
+        if not ip and not token and self._editing is None:
+            self.destroy()  # nothing to save
             return
         if not ip or len(token) != 32:
             messagebox.showerror("Bulb settings", "Enter the bulb's IP address and its 32-character token.", parent=self)
             return
-        self.result = config_mod.Config(
-            ip=ip,
-            token=token,
-            name=self.name_var.get().strip() or "Light",
-            did=self._did,
-            properties=self._cfg.properties,
-            hotkey=self._app.cfg.hotkey,
-            check_updates=self._app.cfg.check_updates,
-            shortcuts=self._app.cfg.shortcuts,
-        )
-        self.destroy()
+        cfg = self._app.cfg
+        name = self.name_var.get().strip() or "Light"
+        info = cfg.bulb(self._editing) if self._editing else None
+        if info is None and self._did:
+            info = next((b for b in cfg.bulbs if b.did == self._did), None)
+        if info is None:
+            info = config_mod.BulbInfo(config_mod.new_bulb_id())
+            cfg.bulbs.append(info)
+        info.name, info.ip, info.token, info.did = name, ip, token, self._did
+        self._editing = info.id
+        self._bulbs_changed()
+        self._refresh_bulb_list()
+        self.saved_label.configure(text=f"Saved {name}.")
 
 
 class App(tk.Tk):
@@ -746,6 +988,7 @@ class App(tk.Tk):
         self._updating = False
         self._settings_open = False
         self._program: dict | None = None  # running sleep timer or sunrise
+        self.quick_panel: QuickPanel | None = None
         self._schedules_fired: set[tuple[str, str]] = set()
         self._off_by_pc = False
         self._last_pc_event = ("", 0.0)
@@ -797,6 +1040,10 @@ class App(tk.Tk):
         style.configure("Power.TButton", font=("Segoe UI Semibold", 12), padding=(10, 12))
         style.configure("PowerOn.TButton", font=("Segoe UI Semibold", 12), padding=(10, 12), background=ACCENT, foreground="#1e1f24")
         style.map("PowerOn.TButton", background=[("active", "#ffd966")])
+        style.configure("TRadiobutton", background=BG, foreground=TEXT, indicatorbackground=PANEL,
+                        indicatorforeground="#1e1f24", indicatormargin=(0, 0, 8, 0))
+        style.map("TRadiobutton", background=[("active", BG)],
+                  indicatorbackground=[("selected", ACCENT), ("active", "#3a3d46")])
         style.configure("TCheckbutton", background=BG, foreground=TEXT, indicatorbackground=PANEL,
                         indicatorforeground="#1e1f24", indicatormargin=(0, 0, 8, 0))
         style.map("TCheckbutton", background=[("active", BG)],
@@ -812,6 +1059,7 @@ class App(tk.Tk):
         header.pack(fill="x")
         self.title_label = ttk.Label(header, text="Light", style="Title.TLabel")
         self.title_label.pack(side="left")
+        self.title_label.bind("<Button-1>", self._bulb_menu)
         ttk.Button(header, text="⚙", width=3, command=self.open_settings).pack(side="right")
         ttk.Button(header, text="⟳", width=3, command=self.refresh).pack(side="right", padx=(0, 6))
         self.timer_button = ttk.Button(header, text="⏾", width=3, command=self._timer_menu)
@@ -899,11 +1147,15 @@ class App(tk.Tk):
     # ---- bulb commands --------------------------------------------------
 
     def _apply_config(self) -> None:
-        self.title_label.configure(text=self.cfg.name)
-        self.title(f"{self.cfg.name} – Mi Bulb")
+        name = self.cfg.display_name
+        several = len(self.cfg.usable_bulbs) > 1
+        self.title_label.configure(text=f"{name} ▾" if several else name, cursor="hand2" if several else "")
+        self.title(f"{name} – Mi Bulb")
+        if self.tray is not None:
+            self.tray.update_menu()
         if self.cfg.is_complete:
             try:
-                self.bulb = Bulb(self.cfg.ip, self.cfg.token, properties=self.cfg.properties)
+                self.bulb = BulbGroup(self.cfg.current_bulbs, on_moved=self._bulb_moved)
             except MiIOError as exc:
                 self.bulb = None
                 self._set_status(str(exc), error=True)
@@ -913,8 +1165,7 @@ class App(tk.Tk):
             self.bulb = None
             self._set_status("Not configured – open settings (⚙) to add your bulb.")
 
-    def _run(self, key: str, func: Callable[[Bulb], Any], refresh: bool = False, retry: bool = True,
-             manual: bool = True) -> None:
+    def _run(self, key: str, func: Callable[[Bulb], Any], refresh: bool = False, manual: bool = True) -> None:
         if manual and key != "status" and self._program is not None:
             self.cancel_program(quiet=True)  # you took over, so stop the timer or sunrise
         bulb = self.bulb
@@ -923,33 +1174,49 @@ class App(tk.Tk):
             return
 
         def done(result: Any) -> None:
-            if isinstance(result, DeviceUnreachable) and retry and self.cfg.did.isdigit():
-                self._relocate(lambda: self._run(key, func, refresh, retry=False, manual=False), str(result))
-            elif isinstance(result, Exception):
+            if isinstance(result, Exception):
                 self._set_status(str(result), error=True)
             elif isinstance(result, BulbState):
                 self._show_state(result)
             elif refresh:
                 self.refresh()
             else:
-                self._set_status(f"Connected to {self.cfg.ip}")
+                self._set_status(f"Connected to {self._target_text()}")
 
         self.worker.submit(key, lambda: func(bulb), done)
 
-    def _relocate(self, then: Callable[[], None], error: str) -> None:
-        """The bulb stopped answering: look for it on the network by device id, in case its IP changed."""
-        self._set_status("Bulb not answering, searching the network…")
+    def _target_text(self) -> str:
+        current = self.cfg.current_bulbs
+        return current[0].ip if len(current) == 1 else f"{len(current)} lights"
 
-        def done(ip: Any) -> None:
-            if isinstance(ip, str) and ip != self.cfg.ip:
-                self.cfg.ip = ip
-                config_mod.save(self.cfg)
-                self.bulb = Bulb(self.cfg.ip, self.cfg.token, properties=self.cfg.properties)
-                then()
-            else:
-                self._set_status(error, error=True)
+    def _bulb_moved(self, info: config_mod.BulbInfo) -> None:
+        # Called from the worker thread when a bulb was found at a new IP.
+        def save() -> None:
+            config_mod.save(self.cfg)
+            self._set_status(f"Found {info.name} at its new address {info.ip}.")
 
-        self.worker.submit("relocate", lambda: find_ip(int(self.cfg.did)), done)
+        self._ui_calls.put(save)
+
+    def _bulb_menu(self, _event: object = None) -> None:
+        usable = self.cfg.usable_bulbs
+        if len(usable) < 2:
+            return
+        menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=TEXT, activebackground=ACCENT, activeforeground=BG,
+                       selectcolor=ACCENT)
+        choice = tk.StringVar(value=self.cfg.selected or usable[0].id)
+        menu.add_radiobutton(label="All lights", value=config_mod.ALL, variable=choice,
+                             command=lambda: self.select_bulb(config_mod.ALL))
+        menu.add_separator()
+        for info in usable:
+            menu.add_radiobutton(label=info.name, value=info.id, variable=choice,
+                                 command=lambda i=info.id: self.select_bulb(i))
+        menu._choice = choice  # keep the variable alive while the menu is open
+        menu.tk_popup(self.title_label.winfo_rootx(), self.title_label.winfo_rooty() + self.title_label.winfo_height())
+
+    def select_bulb(self, bulb_id: str) -> None:
+        self.cfg.selected = bulb_id
+        config_mod.save(self.cfg)
+        self._apply_config()
 
     def refresh(self) -> None:
         self._run("status", lambda b: b.status())
@@ -1101,6 +1368,8 @@ class App(tk.Tk):
 
     def _show_state(self, state: BulbState) -> None:
         self.bulb_state = state
+        if self.quick_panel is not None and self.quick_panel.winfo_exists():
+            self.quick_panel.show_state(state)
         self.power_button.configure(
             text="On" if state.on else "Off", style="PowerOn.TButton" if state.on else "Power.TButton"
         )
@@ -1108,10 +1377,10 @@ class App(tk.Tk):
         self._sync_slider(self.kelvin_label, state.color_temperature)
         self.color_swatch.configure(bg=state.color_hex if state.mode == MODE_COLOR else "#ffffff")
         mode = "colour" if state.mode == MODE_COLOR else "white"
-        self._set_status(f"Connected to {self.cfg.ip} · {mode} mode")
+        self._set_status(f"Connected to {self._target_text()} · {mode} mode")
         if self.tray is not None:
             self.tray.icon = make_icon_image(state.on)
-            self.tray.title = f"{self.cfg.name}: {'on' if state.on else 'off'}"
+            self.tray.title = f"{self.cfg.display_name}: {'on' if state.on else 'off'}"
 
     def _set_status(self, text: str, error: bool = False) -> None:
         self.status_label.configure(text=text, foreground=ERROR if error else MUTED)
@@ -1126,10 +1395,7 @@ class App(tk.Tk):
             self.wait_window(dialog)
         finally:
             self._settings_open = False
-        if dialog.result is not None:
-            self.cfg = dialog.result
-            path = config_mod.save(self.cfg)
-            self._set_status(f"Saved settings to {path}")
+        if dialog.changed:
             self._apply_config()
 
     # ---- app options ------------------------------------------------------
@@ -1236,8 +1502,8 @@ class App(tk.Tk):
         status(f"Downloading Mi Bulb {update.version}…")
         run_in_thread(self._ui_calls.put, lambda: updates.download(update, progress), downloaded)
 
-    def forget_bulb(self) -> None:
-        self.cfg = config_mod.forget_bulb(self.cfg)
+    def forget_bulbs(self) -> None:
+        self.cfg = config_mod.forget_bulbs(self.cfg)
         config_mod.save(self.cfg)
         self.bulb_state = None
         self.power_button.configure(text="Power", style="Power.TButton")
@@ -1270,8 +1536,24 @@ class App(tk.Tk):
         def scene_action(scene_id: str) -> Callable[[], None]:
             return lambda: post(lambda: self.apply_scene_id(scene_id))
 
+        def light_item(bulb_id: str, name: str) -> "pystray.MenuItem":
+            return pystray.MenuItem(name, lambda: post(lambda: self.select_bulb(bulb_id)), radio=True,
+                                    checked=lambda _item: (self.cfg.selected or "") == bulb_id
+                                    or (not self.cfg.selected and self.cfg.usable_bulbs
+                                        and self.cfg.usable_bulbs[0].id == bulb_id))
+
+        def light_items():
+            yield light_item(config_mod.ALL, "All lights")
+            yield pystray.Menu.SEPARATOR
+            for info in self.cfg.usable_bulbs:
+                yield light_item(info.id, info.name)
+
         menu = pystray.Menu(
-            pystray.MenuItem("Toggle", lambda: post(self.toggle), default=True),
+            # Left-clicking the icon runs the default item: the quick panel or toggle (see settings).
+            pystray.MenuItem("Quick panel", lambda: post(self._tray_click), default=True, visible=False),
+            pystray.MenuItem("Light", pystray.Menu(light_items),
+                             visible=lambda _item: len(self.cfg.usable_bulbs) > 1),
+            pystray.MenuItem("Toggle", lambda: post(self.toggle)),
             pystray.MenuItem("Turn on", lambda: post(lambda: self.turn(True))),
             pystray.MenuItem("Turn off", lambda: post(lambda: self.turn(False))),
             pystray.MenuItem("Brightness", pystray.Menu(*[
@@ -1439,6 +1721,28 @@ class App(tk.Tk):
             self._off_by_pc = False
             # After sleep the network needs a moment to come back.
             self.after(4000 if event == "resume" else 0, lambda: self.turn(True))
+
+    def toggle_quick_panel(self) -> None:
+        if self.quick_panel is not None and self.quick_panel.winfo_exists():
+            self.quick_panel.close()
+            return
+        self.quick_panel = QuickPanel(self)
+        if self.bulb is not None:
+            self.refresh()
+
+    def _quick_brightness(self, value: int) -> None:
+        self._sync_slider(self.brightness_label, value)
+        self._on_brightness(value)
+
+    def _quick_kelvin(self, value: int) -> None:
+        self._sync_slider(self.kelvin_label, value)
+        self._on_kelvin(value)
+
+    def _tray_click(self) -> None:
+        if self.cfg.tray_click == "toggle":
+            self.toggle()
+        else:
+            self.toggle_quick_panel()
 
     def _tray_brightness(self, percent: int) -> None:
         self._sync_slider(self.brightness_label, percent)

@@ -5,9 +5,10 @@
 Control a **Mi Smart LED Bulb Essential (White and Color)** from your Windows PC. You don't need a hub or any extra hardware, and nothing goes through the cloud. The app talks to the bulb directly over your Wi-Fi using Xiaomi's local miIO/MIoT protocol, the same one the Xiaomi Home app uses.
 
 - Turn the light on or off, set brightness, white temperature (1700–6500 K) and RGB colour
-- Use the system-tray icon: click it to toggle, right-click for brightness and white presets
+- Use the system-tray icon: click it for a quick panel (power, brightness, white, colours, scenes), right-click for the full menu
 - Keyboard shortcuts that work in any app: toggle, brighter/dimmer, on/off, white presets. You can change them all.
 - Start it with Windows, quietly in the tray
+- Several bulbs: control one, or all of them at once
 - Scenes: one-click favourites like Reading, Relax, Movie and Gaming. Save your own and give them shortcuts.
 - Sleep timer that fades out, sunrise wake-up, and schedules (on/off/scene at set times)
 - Follows your PC: off when you lock it or it sleeps, back on when you return
@@ -73,6 +74,16 @@ If the router gives the bulb a new IP, Mi Bulb finds it again on the network by 
 **Manual setup:** you can also type the IP and token in yourself, for example ones you got from [Xiaomi Cloud Tokens Extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor).
 
 To start Mi Bulb with Windows, turn on **Start with Windows** in settings → App. This works for the portable exe too.
+
+## Several bulbs
+
+Click **Sign in with Xiaomi** in Settings → Bulbs, then **Add all lights from my account** to add every light at once. You can also add bulbs one by one, or type them in yourself.
+
+With more than one bulb, the name at the top of the window gets a ▾. Click it to control **All lights** or just one bulb. The same choice is in the tray menu under **Light**. Scenes, shortcuts, timers and schedules act on whatever is picked there. If one bulb doesn't answer, the others still change, and the status line names the one that didn't.
+
+## Tray quick panel
+
+Left-click the tray icon to open a small panel above the taskbar, like the Windows volume pop-up. It has power, brightness and white sliders, colour swatches, your first six scenes and a 30-minute sleep timer. Click anywhere else or press Esc to close it. If you'd rather left-click just toggle the light, change that in Settings → App → Tray icon.
 
 ## Scenes
 
@@ -144,9 +155,10 @@ python -m mibulb color ff8800
 python -m mibulb status
 python -m mibulb discover
 python -m mibulb login
+python -m mibulb --bulb all off
 ```
 
-`--ip` and `--token` override the config file for a single command.
+`--bulb NAME` picks a bulb by name (or `--bulb all`). `--ip` and `--token` control a bulb that isn't in your settings.
 
 ## Configuration
 
@@ -160,7 +172,7 @@ See [`config.example.json`](config.example.json). `config.json` is listed in `.g
 
 ### Other bulbs
 
-The default property ids come from the [MIoT spec for yeelink.light.color5](https://home.miot-spec.com/spec/yeelink.light.color5) (service 2: on=1, brightness=2, color-temperature=3, color=4, mode=5). If your light uses different ids, look it up on [home.miot-spec.com](https://home.miot-spec.com) and add them to your config:
+The default property ids come from the [MIoT spec for yeelink.light.color5](https://home.miot-spec.com/spec/yeelink.light.color5) (service 2: on=1, brightness=2, color-temperature=3, color=4, mode=5). If your light uses different ids, look it up on [home.miot-spec.com](https://home.miot-spec.com) and add them to that bulb's entry in your config:
 
 ```json
 "properties": { "on": 1, "brightness": 2, "color_temperature": 3, "color": 4, "mode": 5 }
